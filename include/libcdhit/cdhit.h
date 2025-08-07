@@ -1,11 +1,11 @@
-#ifndef CLUSTER_H
-#define CLUSTER_H
+#ifndef CDHIT_H
+#define CDHIT_H
 #include "cdhit-common.h"
 #include "input_sequence.h"
 
 class cluster{
 public:
-	vector<int> parent;
+//	vector<int> parent;
 	cluster() {
 	}
 
