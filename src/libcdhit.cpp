@@ -1,4 +1,4 @@
-#include "libcdhit.h"
+#include "cdhit.h"
 //SequenceDB seq_db;
 Options options;
 void initOptions(){
