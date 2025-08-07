@@ -1,4 +1,4 @@
-#include "cluster.h"
+#include "libcdhit.h"
 //SequenceDB seq_db;
 Options options;
 void initOptions(){
