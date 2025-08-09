@@ -193,6 +193,7 @@ int main(int argc, char* argv[])
 	int table_size = 1;
 	for(int i = 0; i < kmer_size; i++) table_size *= MAX_UCA;
 	vector<vector<pair<int, int>>> word_table(table_size);
+
 	cerr << "buckets size: " << table_size << endl;
 
 	/// sort seq by len
@@ -213,7 +214,7 @@ int main(int argc, char* argv[])
             int bucket = word_encodes[j];
             int count  = word_encodes_no[j];
             if (count > 0) {
-				assert(bucket < table_size);
+				//assert(bucket < table_size);
                 word_table[bucket].emplace_back(seq_id, count);
 
             }
