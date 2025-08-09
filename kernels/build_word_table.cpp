@@ -90,6 +90,7 @@ void init_aa_map() {
 }
 
 /// This function is imported from cdhit
+/// Raw seq is map to [0-21] when reading data from disk
 /// NAA mean k-mer size
 /// word_encodes and word_encodes_no are pre-allocated with max seq length
 int EncodeWords(Sequence &seq, vector<int> & word_encodes, vector<int> & word_encodes_no, int NAA)
@@ -103,7 +104,8 @@ int EncodeWords(Sequence &seq, vector<int> & word_encodes, vector<int> & word_en
 	for (j = 0; j < aan_no; j++) {
 		const char* word = seqi + j;
 		int encode = 0;
-		for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
+		//for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
+		for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) encode += word[k] * NAAN_array[k1];
 		word_encodes[j] = encode;
 	}
 
@@ -140,6 +142,9 @@ int main(int argc, char* argv[])
 
 	fp1 = gzopen(filename.c_str(),"r");
 
+	InitNAA(MAX_UCA);
+    init_aa_map();
+
 	if(NULL == fp1){
 		cerr << "Fail to open file: " << filename << endl;
 		return 0;
@@ -164,6 +169,11 @@ int main(int argc, char* argv[])
 		seq.name = ks1->name.s;
 		seq.comment = ks1->comment.s;
 		seq.seq = ks1->seq.s;
+		char * seq_data = seq.seq.data();
+		for(int i = 0; i < seq.seq.size(); i++)
+		{
+			seq_data[i] = aa_map[seq_data[i]];
+		}
 		seqs.emplace_back(seq);
 		
 		number_seqs++;
@@ -180,8 +190,6 @@ int main(int argc, char* argv[])
 	/// build word table
 	/// step 1: encode 
 	/// step 2: add to wordtable
-	InitNAA(MAX_UCA);
-    init_aa_map();
 	
 	vector<int> word_encodes;
 	word_encodes.resize(max_seq_len);	
