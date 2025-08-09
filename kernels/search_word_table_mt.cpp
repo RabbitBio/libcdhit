@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cassert>
 #include <sys/time.h>
+#include <atomic>
+#include "robin_hood.h"
 
 using namespace std;
 
@@ -130,7 +132,7 @@ int EncodeWords(Sequence &seq, vector<int> & word_encodes, vector<int> & word_en
 int CountWords(int aan_no,
                vector<int>& word_encodes,
                vector<int>& word_encodes_no,
-               unordered_map<int, int>& lookCounts,      // 输出：候选目标及公共k-mer数
+               robin_hood::unordered_map<int, int>& lookCounts,      // 输出：候选目标及公共k-mer数
                vector<vector<pair<int,int>>>& word_table,
                int min_rest)                         // 与原逻辑一致：剩余kmer阈值过滤
 {
@@ -327,36 +329,79 @@ int main(int argc, char* argv[])
 	cerr << "Encode and insert word table time: " << t2 - t1 << " seconds" << endl;
 
 	//search all-vs-all
-	unordered_map<int, int> lookCounts;
-	vector<int> indexMapping(seqs.size());
-	int min_rest = 0; //FIXME: using real min_rest
-	int64_t all_hits = 0;
-	double t3 = get_time();
-	for(int i = 0; i < seqs.size(); i++)
-	{
-        EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
-		int kmer_no = seqs[i].seq.size() - kmer_size + 1;
-		CountWords(kmer_no,
-               word_encodes,
-               word_encodes_no,
-               lookCounts,      // 输出：候选目标及公共k-mer数
-               word_table,
-			   min_rest);
-	
-		all_hits += lookCounts.size();
+	//unordered_map<int, int> lookCounts;
+	//vector<int> indexMapping(seqs.size());
+	//int min_rest = 0; //FIXME: using real min_rest
+	//int64_t all_hits = 0;
+	//double t3 = get_time();
+	//for(int i = 0; i < seqs.size(); i++)
+	//{
+    //    EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
+	//	int kmer_no = seqs[i].seq.size() - kmer_size + 1;
+	//	CountWords(kmer_no,
+    //           word_encodes,
+    //           word_encodes_no,
+    //           lookCounts,      // 输出：候选目标及公共k-mer数
+    //           word_table,
+	//		   min_rest);
+	//
+	//	all_hits += lookCounts.size();
 
-		if (i % 100 == 0) {
-			double percent = 100.0 * i / seqs.size();
-			std::cout << "\rProgress: " << i << "/" << seqs.size()
-				<< " (" << percent << "%)" << std::flush;
+	//	if (i % 100 == 0) {
+	//		double percent = 100.0 * i / seqs.size();
+	//		std::cout << "\rProgress: " << i << "/" << seqs.size()
+	//			<< " (" << percent << "%)" << std::flush;
+	//	}
+
+	//}
+	//cerr << endl;
+	std::atomic<int> progress{0};
+	long long all_hits = 0;  // 归约变量
+	const int min_rest = 0;  // FIXME: 按需设置
+
+	double t3 = get_time();
+#pragma omp parallel
+	{
+		// 线程私有缓存
+		vector<int> word_encodes(max_seq_len);
+		vector<int> word_encodes_no(max_seq_len);
+		robin_hood::unordered_map<int,int> lookCounts;   // 线程私有，避免竞争
+		//lookCounts.reserve(1 << 12);         // 视数据量调整
+
+		long long local_hits = 0; // 每线程局部计数，最后归并
+
+#pragma omp for schedule(dynamic, 1) nowait
+		for (int i = 0; i < seqs.size(); ++i) {
+			// 编码
+			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
+			int kmer_no = (int)seqs[i].seq.size() - kmer_size + 1;
+
+			// 搜索计数（写入线程私有 lookCounts）
+			lookCounts.clear();
+			CountWords(kmer_no, word_encodes, word_encodes_no,
+					lookCounts, word_table, min_rest);
+
+			local_hits += (long long)lookCounts.size();
+
+			// 进度（每处理100条打印）
+			int p = ++progress;
+			if (p % 100 == 0) {
+				double percent = 100.0 * p / seqs.size();
+				std::cout << "\rProgress: " << p << "/" << seqs.size()
+					<< " (" << percent << "%)" << std::flush;
+			}
 		}
 
+		// 归并 all_hits
+#pragma omp atomic
+		all_hits += local_hits;
 	}
-	cerr << endl;
 
+	std::cerr << std::endl;
 	double t4 = get_time();
-	cerr << "All vs all kmer hits: " << all_hits << endl;
-	cerr << "CountWords time: " << t4 - t3 << " seconds" << endl;
+
+	std::cerr << "All vs all kmer hits: " << all_hits << '\n';
+	std::cerr << "CountWords time: " << (t4 - t3) << " seconds" << std::endl;
 
 	gzclose(fp1);	
 
