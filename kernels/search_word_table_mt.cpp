@@ -166,7 +166,56 @@ int CountWords(int aan_no,
 
 	return 0;
 }
+// 仅统计 id>qid（行按 seq_id 降序存储，遇到 <=qid 早停）
+// 输出 out_pairs: vector<pair<tid, C>>
+int CountWords_SA(int aan_no,
+		const std::vector<int>& word_encodes,
+		const std::vector<int>& word_encodes_no,
+		const std::vector<std::vector<std::pair<int,int>>>& word_table,
+		int min_rest,
+		int qid,
+		// 稀疏累加器（线程私有）
+		std::vector<int>& counts,
+		std::vector<int>& visited,
+		std::vector<std::pair<int,int>>& out_pairs)
+{
+	out_pairs.clear();
+	visited.clear();
+	if (aan_no <= 0) return 0;
 
+	auto add_count = [&](int tid, int add){
+		if (counts[tid] == 0) visited.push_back(tid);
+		counts[tid] += add;
+	};
+
+	for (int j0 = 0; j0 < aan_no; ++j0) {
+		int bucket = word_encodes[j0];
+		int qcnt   = word_encodes_no[j0];
+		if (qcnt == 0) continue;
+
+		const auto& hits = word_table[bucket];  // 已按 seq_id 降序
+		int rest = aan_no - j0 + 1;
+
+		// 只扫 id>qid 的前缀
+		for (size_t k = 0; k < hits.size(); ++k) {
+			int tid  = hits[k].first;
+			if (tid <= qid) break;  // 及早终止
+			int tcnt = hits[k].second;
+
+			if (min_rest > 0 && rest < min_rest && counts[tid] == 0) continue;
+			int add = (qcnt < tcnt) ? qcnt : tcnt;
+			add_count(tid, add);
+		}
+	}
+
+	// 导出并清零
+	out_pairs.reserve(visited.size());
+	for (int tid : visited) {
+		out_pairs.emplace_back(tid, counts[tid]);
+		counts[tid] = 0;
+	}
+	return 0;
+}
 // ===== helper: Jaccard =====
 static inline double jaccard_from_CAB(int C, int A, int B) 
 {
@@ -218,25 +267,42 @@ void precompute_edges_jaccard(
 
 		std::vector<int> word_encodes(max_len);
 		std::vector<int> word_encodes_no(max_len);
-		robin_hood::unordered_map<int,int> local;
+		//robin_hood::unordered_map<int,int> local;
+		
+		std::vector<int> counts(seqs.size(), 0);                // 线程私有
+		std::vector<int> visited; visited.reserve(1<<14);       // 线程私有
+		std::vector<std::pair<int,int>> out_pairs;              // 线程私有
+
 
 #pragma omp for schedule(dynamic,1)
 		for (int i = 0; i < N; ++i) {
 			if (A[i] <= 0) { ++progress; continue; }
 
 			EncodeWords((Sequence&)seqs[i], word_encodes, word_encodes_no, kmer_size);
-			local.clear();
-			CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0, i);
+			//local.clear();
+			//CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0, i);
+			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, /*min_rest=*/A[i]/2, i, counts, visited, out_pairs);
 
-			for (auto &kv : local) {
-				int j = kv.first;
-				if (j == i || A[j] <= 0) continue;
-				int u = i < j ? i : j;
-				int v = i < j ? j : i;
-				int C = kv.second;
-				double jac = jaccard_from_CAB(C, A[u], A[v]);
+//			for (auto &kv : local) {
+//				int j = kv.first;
+//				if (j == i || A[j] <= 0) continue;
+//				int u = i < j ? i : j;
+//				int v = i < j ? j : i;
+//				int C = kv.second;
+//				double jac = jaccard_from_CAB(C, A[u], A[v]);
+//				if (jac >= tau) {
+//					edges.emplace_back(u, v);   // 仅写本线程缓冲，无需 critical
+//				}
+//			}
+
+			// 只保留 Jaccard 过阈值的边（i<j）
+			for (auto &pr : out_pairs) {
+				int j = pr.first;       // j > i
+				if (A[j] <= 0) continue;
+				int C = pr.second;
+				double jac = jaccard_from_CAB(C, A[i], A[j]);
 				if (jac >= tau) {
-					edges.emplace_back(u, v);   // 仅写本线程缓冲，无需 critical
+					edges.emplace_back(i, j); // 线程私有 edges，无需加锁
 				}
 			}
 
