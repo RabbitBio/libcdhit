@@ -134,7 +134,7 @@ int CountWords(int aan_no,
                vector<int>& word_encodes_no,
                robin_hood::unordered_map<int, int>& lookCounts,      // 输出：候选目标及公共k-mer数
                vector<vector<pair<int,int>>>& word_table,
-               int min_rest)                         // 与原逻辑一致：剩余kmer阈值过滤
+               int min_rest, int qid)                         // 与原逻辑一致：剩余kmer阈值过滤
 {
 	lookCounts.clear();
 
@@ -151,6 +151,7 @@ int CountWords(int aan_no,
 		int rest = aan_no - j0 + 1;          // 剩余k-mer数（与原代码一致）
 		for (const auto& hit : hits) {
 			int target_id   = hit.first;           // target seq id
+			if (target_id <= qid) break;
 			int tcnt  = hit.second;          // 该 target 在此 bucket 的计数
 			if (rest < min_rest && !lookCounts.count(target_id)) {
 				continue; // 剪枝：首次遇到且剩余不足
@@ -164,6 +165,197 @@ int CountWords(int aan_no,
 	// lookCounts.push_back({-1, 0});
 
 	return 0;
+}
+
+// ===== helper: Jaccard =====
+static inline double jaccard_from_CAB(int C, int A, int B) 
+{
+	int denom = A + B - C;
+	//return denom > 0 ? double(C) / double(denom) : 0.0;
+	return double(C) / double(denom);
+}
+
+// ===== 阶段A：并行预计算 >=阈值 的稀疏图（只存 i<j 的邻接） =====
+// 依赖你现有的 EncodeWords / CountWords / word_table
+// word_table[bucket] = vector<pair<seq_id, count>>
+void precompute_edges_jaccard(
+		const std::vector<Sequence>& seqs,
+		std::vector<std::vector<std::pair<int,int>>>& word_table,
+		int kmer_size, double tau,
+		std::vector<std::vector<int>>& neigh  // 输出：neigh[u] 存 v(>u)
+		)
+{
+	const int N = (int)seqs.size();
+	neigh.assign(N, {});                  // 只保留 i<j 方向
+	// 预先计算 A[i] = |k-mers(i)| = Li - k + 1
+	std::vector<int> A(N);
+	for (int i = 0; i < N; ++i) {
+		int L = (int)seqs[i].seq.size();
+		A[i] = std::max(0, L - kmer_size + 1);
+	}
+
+	// 为线程私有缓存做准备
+	size_t max_len = 0;
+	for (auto& s : seqs) max_len = std::max(max_len, s.seq.size());
+
+	std::atomic<int> progress{0};
+	double tA = get_time();
+	int nthreads = 1;
+#pragma omp parallel
+	{
+#pragma omp single
+		nthreads = omp_get_num_threads();
+	}
+	// 每个线程一块本地边缓冲
+	std::vector<std::vector<std::pair<int,int>>> thread_edges(nthreads);
+
+#pragma omp parallel
+	{
+		int tid = omp_get_thread_num();
+		auto &edges = thread_edges[tid];
+		edges.clear();
+		edges.reserve(1<<20); // 视数据量调整
+
+		std::vector<int> word_encodes(max_len);
+		std::vector<int> word_encodes_no(max_len);
+		robin_hood::unordered_map<int,int> local;
+
+#pragma omp for schedule(dynamic,1)
+		for (int i = 0; i < N; ++i) {
+			if (A[i] <= 0) { ++progress; continue; }
+
+			EncodeWords((Sequence&)seqs[i], word_encodes, word_encodes_no, kmer_size);
+			local.clear();
+			CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0, i);
+
+			for (auto &kv : local) {
+				int j = kv.first;
+				if (j == i || A[j] <= 0) continue;
+				int u = i < j ? i : j;
+				int v = i < j ? j : i;
+				int C = kv.second;
+				double jac = jaccard_from_CAB(C, A[u], A[v]);
+				if (jac >= tau) {
+					edges.emplace_back(u, v);   // 仅写本线程缓冲，无需 critical
+				}
+			}
+
+			int p = ++progress;
+			if ((p % 1000) == 0) {
+				double percent = 100.0 * p / N;
+				std::cout << "\rPhase A (precompute): " << p << "/" << N
+					<< " (" << percent << "%)" << std::flush;
+			}
+		}
+	} // 并行区结束
+
+	double tB = get_time();
+	// ===== 合并阶段（单线程）=====
+	// 1) 统计每个 u 的边数，便于一次性 reserve
+	std::vector<size_t> cnt(N, 0);
+	for (auto &vec : thread_edges)
+		for (auto &e : vec)
+			++cnt[e.first];
+
+	for (int u = 0; u < N; ++u)
+		if (cnt[u]) neigh[u].reserve(neigh[u].size() + cnt[u]);
+
+	// 2) 顺序合并
+	for (auto &vec : thread_edges)
+		for (auto &e : vec)
+			neigh[e.first].push_back(e.second);
+
+	std::cout << "\n";
+	double tC = get_time();
+	std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
+	std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
+	//#pragma omp parallel
+//	{
+//		std::vector<int> word_encodes(max_len);
+//		std::vector<int> word_encodes_no(max_len);
+//		robin_hood::unordered_map<int,int> local; // tid -> C
+//
+//#pragma omp for schedule(dynamic,1)
+//		for (int i = 0; i < N; ++i) {
+//			if (A[i] <= 0) { ++progress; continue; }
+//			// 编码 + 计数（调用你现有函数）
+//			EncodeWords((Sequence&)seqs[i], word_encodes, word_encodes_no, kmer_size);   // :contentReference[oaicite:3]{index=3}
+//		local.clear();
+//		CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0);  // :contentReference[oaicite:4]{index=4}
+//
+//		// 只保留 i<j 的边，并按阈值过滤
+//		for (auto& kv : local) {
+//			int j = kv.first;
+//			if (j == i || A[j] <= 0) continue;
+//			int u = i < j ? i : j;
+//			int v = i < j ? j : i;
+//			int C = kv.second;
+//			double jac = jaccard_from_CAB(C, A[u], A[v]);
+//			if (jac >= tau) {
+//#pragma omp critical
+//				neigh[u].push_back(v);
+//			}
+//		}
+//
+//		// 进度（可选）
+//		int p = ++progress;
+//		if ((p % 1000) == 0) {
+//			double percent = 100.0 * p / N;
+//			std::cout << "\rPhase A (precompute): " << p << "/" << N
+//				<< " (" << percent << "%)" << std::flush;
+//		}
+//		}
+//	}
+//	std::cout << "\n";
+//	double tB = get_time();
+//	std::cerr << "Precompute (edges) time: " << (tB - tA) << " s\n";
+//
+}
+
+// ===== 阶段B：顺序提交（贪心增量，长度降序） =====
+struct GreedyResult {
+	std::vector<int>  parent;     // 冗余点的代表；代表自身为 -1
+	std::vector<char> redundant;  // 是否被吸收
+	int centers = 0;              // 代表数量
+};
+
+GreedyResult greedy_commit_by_order_already_sorted(
+		const std::vector<Sequence>& seqs,
+		const std::vector<std::vector<int>>& neigh,
+		int kmer_size
+		)
+{
+	const int N = (int)seqs.size();
+	std::vector<char> redundant(N, 0);
+	std::vector<int>  parent(N, -1);
+
+	double tC0 = get_time();
+	// 注意：seqs 已经按长度降序排好，直接用 i=0..N-1
+	for (int i = 0; i < N; ++i) {
+		if (redundant[i]) continue;   // 若已被更长代表吸收则跳过
+
+		// i 成为代表，吸收它的邻居（仅存了 i<j 的边）
+		for (int v : neigh[i]) {
+			if (!redundant[v]) {
+				redundant[v] = 1;
+				parent[v] = i;
+			}
+		}
+
+		if ((i % 1000) == 0) {
+			double percent = 100.0 * (i+1) / N;
+			std::cout << "\rPhase B (commit): " << (i+1) << "/" << N
+				<< " (" << percent << "%)" << std::flush;
+		}
+	}
+	std::cout << "\n";
+	double tC1 = get_time();
+
+	int centers = 0;
+	for (int i = 0; i < N; ++i) if (!redundant[i]) ++centers;
+
+	std::cerr << "Commit (greedy) time: " << (tC1 - tC0) << " s\n";
+	return { std::move(parent), std::move(redundant), centers };
 }
 
 int main(int argc, char* argv[])
@@ -314,6 +506,16 @@ int main(int argc, char* argv[])
 			}
 		}
 	}   
+
+	//sort each row in word table in descending order
+	#pragma omp parallel for schedule(dynamic)
+	for (size_t i = 0; i < word_table.size(); ++i) {
+		auto& row = word_table[i];
+		std::sort(row.begin(), row.end(),
+				[](const std::pair<int,int>& a, const std::pair<int,int>& b) {
+				return a.first > b.first; // seq_id 降序
+				});
+	}
 	double t2 = get_time();
  
 	int element_no = 0;
@@ -359,49 +561,66 @@ int main(int argc, char* argv[])
 	long long all_hits = 0;  // 归约变量
 	const int min_rest = 0;  // FIXME: 按需设置
 
+//	double t3 = get_time();
+//#pragma omp parallel
+//	{
+//		// 线程私有缓存
+//		vector<int> word_encodes(max_seq_len);
+//		vector<int> word_encodes_no(max_seq_len);
+//		robin_hood::unordered_map<int,int> lookCounts;   // 线程私有，避免竞争
+//		//lookCounts.reserve(1 << 12);         // 视数据量调整
+//
+//		long long local_hits = 0; // 每线程局部计数，最后归并
+//
+//#pragma omp for schedule(dynamic, 1) nowait
+//		for (int i = 0; i < seqs.size(); ++i) {
+//			// 编码
+//			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
+//			int kmer_no = (int)seqs[i].seq.size() - kmer_size + 1;
+//
+//			// 搜索计数（写入线程私有 lookCounts）
+//			lookCounts.clear();
+//			CountWords(kmer_no, word_encodes, word_encodes_no,
+//					lookCounts, word_table, min_rest);
+//
+//			local_hits += (long long)lookCounts.size();
+//
+//			// 进度（每处理100条打印）
+//			int p = ++progress;
+//			if (p % 100 == 0) {
+//				double percent = 100.0 * p / seqs.size();
+//				std::cout << "\rProgress: " << p << "/" << seqs.size()
+//					<< " (" << percent << "%)" << std::flush;
+//			}
+//		}
+//
+//		// 归并 all_hits
+//#pragma omp atomic
+//		all_hits += local_hits;
+//	}
+//
+//	std::cerr << std::endl;
+//	double t4 = get_time();
+//
+//	std::cerr << "All vs all kmer hits: " << all_hits << '\n';
+//	std::cerr << "CountWords time: " << (t4 - t3) << " seconds" << std::endl;
+
+// ===== 两阶段：A) 并行预计算稀疏图(按阈值存边)  B) 顺序提交（贪心） =====
+	double tau = 0.5;   // Jaccard 阈值：按需设置
+
+	// 阶段A：预计算邻接（只存 i<j）
 	double t3 = get_time();
-#pragma omp parallel
-	{
-		// 线程私有缓存
-		vector<int> word_encodes(max_seq_len);
-		vector<int> word_encodes_no(max_seq_len);
-		robin_hood::unordered_map<int,int> lookCounts;   // 线程私有，避免竞争
-		//lookCounts.reserve(1 << 12);         // 视数据量调整
+	std::vector<std::vector<int>> neigh;
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, neigh);
 
-		long long local_hits = 0; // 每线程局部计数，最后归并
-
-#pragma omp for schedule(dynamic, 1) nowait
-		for (int i = 0; i < seqs.size(); ++i) {
-			// 编码
-			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
-			int kmer_no = (int)seqs[i].seq.size() - kmer_size + 1;
-
-			// 搜索计数（写入线程私有 lookCounts）
-			lookCounts.clear();
-			CountWords(kmer_no, word_encodes, word_encodes_no,
-					lookCounts, word_table, min_rest);
-
-			local_hits += (long long)lookCounts.size();
-
-			// 进度（每处理100条打印）
-			int p = ++progress;
-			if (p % 100 == 0) {
-				double percent = 100.0 * p / seqs.size();
-				std::cout << "\rProgress: " << p << "/" << seqs.size()
-					<< " (" << percent << "%)" << std::flush;
-			}
-		}
-
-		// 归并 all_hits
-#pragma omp atomic
-		all_hits += local_hits;
-	}
-
-	std::cerr << std::endl;
+	// 阶段B：顺序提交（按长度降序），得到 parent/redundant/centers
 	double t4 = get_time();
+	auto gres = greedy_commit_by_order_already_sorted(seqs, neigh, kmer_size);
+	double t5 = get_time();
 
-	std::cerr << "All vs all kmer hits: " << all_hits << '\n';
-	std::cerr << "CountWords time: " << (t4 - t3) << " seconds" << std::endl;
+	std::cerr << "Greedy (two-stage) centers: " << gres.centers << "\n";
+	std::cerr << "Two-stage jaccard filtering time: " << (t4 - t3) << " s\n";
+	std::cerr << "Two-stage serial commit time: " << (t5 - t4) << " s\n";
 
 	gzclose(fp1);	
 
