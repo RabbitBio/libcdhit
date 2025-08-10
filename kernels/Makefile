@@ -10,11 +10,15 @@ build_word_table: build_word_table.cpp
 build_word_table_mt: build_word_table_mt.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
 
-# OpenMP
+# OpenMP Search DOWN
 search_word_table_mt: search_word_table_mt.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
 
-all: build_word_table build_word_table_mt search_word_table_mt
+# OpenMP Search UP
+search_word_table_mt_up: search_word_table_mt_up.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
+
+all: build_word_table build_word_table_mt search_word_table_mt  search_word_table_mt_up
 
 clean:
-	rm -f build_word_table build_word_table_mt search_word_table_mt
+	rm -f build_word_table build_word_table_mt search_word_table_mt  search_word_table_mt_up

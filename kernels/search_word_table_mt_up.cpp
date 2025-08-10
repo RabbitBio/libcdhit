@@ -38,12 +38,6 @@ struct IndexCount
 	int count;
 };
 
-struct WordTableCSR
-{
-	vector<uint32_t> row_ptr;
-	vector<uint32_t> col_idx;
-	vector<uint16_t> col_cnt;
-};
 /// This is for NAAN array.
 /// FIXME: reimplement it with constexpr
 #define MAX_UCA 21
@@ -172,272 +166,133 @@ int CountWords(int aan_no,
 
 	return 0;
 }
-/// This is modified from cdhit
-int CountWords_CSR(int aan_no,
-               vector<int>& word_encodes,
-               vector<int>& word_encodes_no,
-               robin_hood::unordered_map<int, int>& lookCounts,      // 输出：候选目标及公共k-mer数
-			   WordTableCSR & word_table_csr,
-               int min_rest, int qid)                         // 与原逻辑一致：剩余kmer阈值过滤
+// 只统计 target_id < qid 的部分
+int CountWordsUp(int aan_no,
+		const std::vector<int>& word_encodes,
+		const std::vector<int>& word_encodes_no,
+		robin_hood::unordered_map<int,int>& lookCounts,
+		const std::vector<std::vector<std::pair<int,int>>>& word_table,
+		int min_rest,
+		int qid)
 {
 	lookCounts.clear();
+	if (aan_no <= 0) return 0;
 
-	// 2) 按 query 的编码遍历倒排表并累积
-	int j0 = 0;
-	const int* we  = word_encodes.data();
-
-	for (; j0 < aan_no; ++j0) {
-
+	for (int j0 = 0; j0 < aan_no; ++j0) {
+		int bucket = word_encodes[j0];
 		int qcnt   = word_encodes_no[j0];
 		if (qcnt == 0) continue;
 
-		int bucket = word_encodes[j0];
-		
-		size_t beg = word_table_csr.row_ptr[bucket], end = word_table_csr.row_ptr[bucket+1];
-		const uint32_t* ids  = &word_table_csr.col_idx[beg];
-		const uint16_t* cnts = &word_table_csr.col_cnt[beg];
+		const auto& hits = word_table[bucket]; // 行内按 seq_id 降序
+		// 找到第一个 <= qid 的位置（降序比较）
+		auto it = std::lower_bound(
+				hits.begin(), hits.end(), qid,
+				[](const std::pair<int,int>& a, int val){ return a.first > val; }
+				);
+		int rest = aan_no - j0 + 1;
 
-		//const auto& hits = word_table[bucket];
-		int rest = aan_no - j0 + 1;          // 剩余k-mer数（与原代码一致）
-		for (size_t p = 0; p < end-beg; ++p) {
-			int target_id   = ids[p];           // target seq id
-			if (target_id <= qid) break;
-			//using cnts[p] instead!
-			if (rest < min_rest && !lookCounts.count(target_id)) {
-				continue; // 剪枝：首次遇到且剩余不足
-			}
-			int add   = std::min(qcnt, (int)cnts[p]);
-			lookCounts[target_id] += add;
+		// 只遍历后缀：target_id <= qid
+		for (; it != hits.end(); ++it) {
+			int tid  = it->first;
+			if (tid == qid) continue; // 排除自身
+			int tcnt = it->second;
+			if (min_rest > 0 && rest < min_rest && !lookCounts.count(tid)) continue;
+			int add = (qcnt < tcnt) ? qcnt : tcnt;
+			lookCounts[tid] += add;
 		}
 	}
-
-	// 如果你需要与老代码完全兼容的“哨兵”结尾，可取消注释：
-	// lookCounts.push_back({-1, 0});
-
 	return 0;
 }
-// ===== helper: Jaccard =====
-static inline double jaccard_from_CAB(int C, int A, int B) 
-{
-	int denom = A + B - C;
-	return denom > 0 ? double(C) / double(denom) : 0.0;
+struct ClassifyUpResult {
+    std::vector<int> parent; // parent[i] = 代表ID；无代表则 -1
+    int centers = 0;
+};
+
+static inline double jaccard_CAB(int C, int A, int B) {
+    int denom = A + B - C;
+    return denom > 0 ? double(C) / double(denom) : 0.0;
 }
 
-// ===== 阶段A：并行预计算 >=阈值 的稀疏图（只存 i<j 的邻接） =====
-// 依赖你现有的 EncodeWords / CountWords / word_table
-// word_table[bucket] = vector<pair<seq_id, count>>
-void precompute_edges_jaccard(
+ClassifyUpResult classify_up_parallel(
 		const std::vector<Sequence>& seqs,
-		std::vector<std::vector<std::pair<int,int>>>& word_table,
-		WordTableCSR & word_table_csr,
-		int kmer_size, double tau,
-		std::vector<std::vector<int>>& neigh  // 输出：neigh[u] 存 v(>u)
-		)
+		const std::vector<std::vector<std::pair<int,int>>>& word_table,
+		int kmer_size, double tau)
 {
 	const int N = (int)seqs.size();
-	neigh.assign(N, {});                  // 只保留 i<j 方向
-	// 预先计算 A[i] = |k-mers(i)| = Li - k + 1
+	// 预计算 A[i] = |k-mers(i)|
 	std::vector<int> A(N);
 	for (int i = 0; i < N; ++i) {
 		int L = (int)seqs[i].seq.size();
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
-	// 为线程私有缓存做准备
 	size_t max_len = 0;
 	for (auto& s : seqs) max_len = std::max(max_len, s.seq.size());
 
+	std::vector<int> parent(N, -1);
 	std::atomic<int> progress{0};
-	double tA = get_time();
-	int nthreads = 1;
+
+	double t0 = get_time();
 #pragma omp parallel
 	{
-#pragma omp single
-		nthreads = omp_get_num_threads();
-	}
-	// 每个线程一块本地边缓冲
-	std::vector<std::vector<std::pair<int,int>>> thread_edges(nthreads);
+		std::vector<int> wenc(max_len);
+		std::vector<int> wnum(max_len);
+		robin_hood::unordered_map<int,int> local; // tid -> C
 
-#pragma omp parallel
-	{
-		int tid = omp_get_thread_num();
-		auto &edges = thread_edges[tid];
-		edges.clear();
-		edges.reserve(1<<15); // 视数据量调整
+#pragma omp for schedule(static,128)
+		for (int qid = 0; qid < N; ++qid) {
+			if (A[qid] <= 0) { parent[qid] = -1; ++progress; continue; }
 
-		std::vector<int> word_encodes(max_len);
-		std::vector<int> word_encodes_no(max_len);
-		robin_hood::unordered_map<int,int> local;
+			// 编码
+			EncodeWords((Sequence&)seqs[qid], wenc, wnum, kmer_size);
 
-#pragma omp for schedule(dynamic,1)
-		for (int i = 0; i < N; ++i) {
-			if (A[i] <= 0) { ++progress; continue; }
-
-			EncodeWords((Sequence&)seqs[i], word_encodes, word_encodes_no, kmer_size);
+			// 只向上（id < qid）计数
 			local.clear();
-			//CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0, i);
-			CountWords_CSR(A[i], word_encodes, word_encodes_no, local, word_table_csr, /*min_rest=*/0, i);
+			CountWordsUp(A[qid], wenc, wnum, local, word_table, /*min_rest=*/0, qid);
 
-			for (auto &kv : local) {
-				int j = kv.first;
-				if (j == i || A[j] <= 0) continue;
-				int u = i < j ? i : j;
-				int v = i < j ? j : i;
+			// 选代表：Jaccard 最大且 >= tau（也可改成“先过阈值的最早 id”）
+			int best_id = -1; double best_sim = -1.0;
+			for (auto& kv : local) {
+				int tid = kv.first;
+				if (tid >= qid || A[tid] <= 0) continue; // 只看更长
 				int C = kv.second;
-				double jac = jaccard_from_CAB(C, A[u], A[v]);
-				if (jac >= tau) {
-					edges.emplace_back(u, v);   // 仅写本线程缓冲，无需 critical
+				double jac = jaccard_CAB(C, A[qid], A[tid]);
+				if (jac >= tau && jac > best_sim) {
+					best_sim = jac;
+					best_id = tid;
 				}
 			}
+			parent[qid] = best_id; // -1 表示它是中心
 
 			int p = ++progress;
-			if ((p % 1000) == 0) {
+			if ((p & 1023) == 0) {
 				double percent = 100.0 * p / N;
-				std::cout << "\rPhase A (precompute): " << p << "/" << N
+				std::cout << "\rClassify-up progress: " << p << "/" << N
 					<< " (" << percent << "%)" << std::flush;
 			}
 		}
-	} // 并行区结束
-
-	double tB = get_time();
-	// ===== 合并阶段（单线程）=====
-	// 1) 统计每个 u 的边数，便于一次性 reserve
-	std::vector<size_t> cnt(N, 0);
-	for (auto &vec : thread_edges)
-		for (auto &e : vec)
-			++cnt[e.first];
-
-	for (int u = 0; u < N; ++u)
-		if (cnt[u]) neigh[u].reserve(neigh[u].size() + cnt[u]);
-
-	// 2) 顺序合并
-	for (auto &vec : thread_edges)
-		for (auto &e : vec)
-			neigh[e.first].push_back(e.second);
-
-	std::cout << "\n";
-	double tC = get_time();
-	std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
-	std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
-	//#pragma omp parallel
-//	{
-//		std::vector<int> word_encodes(max_len);
-//		std::vector<int> word_encodes_no(max_len);
-//		robin_hood::unordered_map<int,int> local; // tid -> C
-//
-//#pragma omp for schedule(dynamic,1)
-//		for (int i = 0; i < N; ++i) {
-//			if (A[i] <= 0) { ++progress; continue; }
-//			// 编码 + 计数（调用你现有函数）
-//			EncodeWords((Sequence&)seqs[i], word_encodes, word_encodes_no, kmer_size);   // :contentReference[oaicite:3]{index=3}
-//		local.clear();
-//		CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0);  // :contentReference[oaicite:4]{index=4}
-//
-//		// 只保留 i<j 的边，并按阈值过滤
-//		for (auto& kv : local) {
-//			int j = kv.first;
-//			if (j == i || A[j] <= 0) continue;
-//			int u = i < j ? i : j;
-//			int v = i < j ? j : i;
-//			int C = kv.second;
-//			double jac = jaccard_from_CAB(C, A[u], A[v]);
-//			if (jac >= tau) {
-//#pragma omp critical
-//				neigh[u].push_back(v);
-//			}
-//		}
-//
-//		// 进度（可选）
-//		int p = ++progress;
-//		if ((p % 1000) == 0) {
-//			double percent = 100.0 * p / N;
-//			std::cout << "\rPhase A (precompute): " << p << "/" << N
-//				<< " (" << percent << "%)" << std::flush;
-//		}
-//		}
-//	}
-//	std::cout << "\n";
-//	double tB = get_time();
-//	std::cerr << "Precompute (edges) time: " << (tB - tA) << " s\n";
-//
-}
-
-// ===== 阶段B：顺序提交（贪心增量，长度降序） =====
-struct GreedyResult {
-	std::vector<int>  parent;     // 冗余点的代表；代表自身为 -1
-	std::vector<char> redundant;  // 是否被吸收
-	int centers = 0;              // 代表数量
-};
-
-GreedyResult greedy_commit_by_order_already_sorted(
-		const std::vector<Sequence>& seqs,
-		const std::vector<std::vector<int>>& neigh,
-		int kmer_size
-		)
-{
-	const int N = (int)seqs.size();
-	std::vector<char> redundant(N, 0);
-	std::vector<int>  parent(N, -1);
-
-	double tC0 = get_time();
-	// 注意：seqs 已经按长度降序排好，直接用 i=0..N-1
-	for (int i = 0; i < N; ++i) {
-		if (redundant[i]) continue;   // 若已被更长代表吸收则跳过
-
-		// i 成为代表，吸收它的邻居（仅存了 i<j 的边）
-		for (int v : neigh[i]) {
-			if (!redundant[v]) {
-				redundant[v] = 1;
-				parent[v] = i;
-			}
-		}
-
-		if ((i % 1000) == 0) {
-			double percent = 100.0 * (i+1) / N;
-			std::cout << "\rPhase B (commit): " << (i+1) << "/" << N
-				<< " (" << percent << "%)" << std::flush;
-		}
 	}
 	std::cout << "\n";
-	double tC1 = get_time();
+	double t1 = get_time();
 
 	int centers = 0;
-	for (int i = 0; i < N; ++i) if (!redundant[i]) ++centers;
+	for (int i = 0; i < N; ++i) if (parent[i] == -1) ++centers;
 
-	std::cerr << "Commit (greedy) time: " << (tC1 - tC0) << " s\n";
-	return { std::move(parent), std::move(redundant), centers };
+	std::cerr << "Classify-up time: " << (t1 - t0) << " s\n";
+	return { std::move(parent), centers };
 }
 
-void build_csr(
-		const std::vector<std::vector<std::pair<int,int>>>& word_table,
-		WordTableCSR & word_table_csr) 
-{
-	std::vector<uint32_t>& row_ptr = word_table_csr.row_ptr; 
-	std::vector<uint32_t>& col_idx = word_table_csr.col_idx;
-	std::vector<uint16_t>& col_cnt = word_table_csr.col_cnt;
-
-	const size_t table_size = word_table.size();
-
-	// 重新分配内存并初始化为 0
-	row_ptr.assign(table_size + 1, 0);
-
-	// 计算前缀和
-	for (size_t b = 0; b < table_size; ++b)
-		row_ptr[b+1] = row_ptr[b] + word_table[b].size();
-
-	col_idx.resize(row_ptr.back());
-	col_cnt.resize(row_ptr.back());
-
-	// 填充 CSR 数据
-#pragma omp parallel for
-	for (size_t b = 0; b < table_size; ++b) {
-		size_t off = row_ptr[b];
-		auto& row = word_table[b];
-		for (size_t k = 0; k < row.size(); ++k) {
-			col_idx[off + k] = (uint32_t)row[k].first;
-			col_cnt[off + k] = (uint16_t)row[k].second;
-		}
+// 迭代版 find_root + 路径压缩（保证 parent[x] < x 或 -1）
+int find_root_compress(std::vector<int>& parent, int x) {
+	int r = x;
+	while (parent[r] != -1) r = parent[r];   // 找根
+	// 路径压缩
+	while (x != r) {
+		int p = parent[x];
+		parent[x] = r;
+		x = p;
 	}
+	return r;
 }
 
 int main(int argc, char* argv[])
@@ -521,7 +376,6 @@ int main(int argc, char* argv[])
 	int table_size = 1;
 	for(int i = 0; i < kmer_size; i++) table_size *= MAX_UCA;
 	vector<vector<pair<int, int>>> word_table(table_size);
-	WordTableCSR word_table_csr;
 
 	cerr << "buckets size: " << table_size << endl;
 
@@ -590,18 +444,15 @@ int main(int argc, char* argv[])
 		}
 	}   
 
-	//sort each row in word table in descending order
+	//sort each row in word table in ascending order
 	#pragma omp parallel for schedule(dynamic)
 	for (size_t i = 0; i < word_table.size(); ++i) {
 		auto& row = word_table[i];
 		std::sort(row.begin(), row.end(),
 				[](const std::pair<int,int>& a, const std::pair<int,int>& b) {
-				return a.first > b.first; // seq_id 降序
+				return a.first < b.first; // seq_id 升序
 				});
 	}
-
-	build_csr(word_table, word_table_csr);
-
 	double t2 = get_time();
  
 	int element_no = 0;
@@ -696,18 +547,26 @@ int main(int argc, char* argv[])
 
 	// 阶段A：预计算邻接（只存 i<j）
 	double t3 = get_time();
-	std::vector<std::vector<int>> neigh;
-	//precompute_edges_jaccard(seqs, word_table, kmer_size, tau, neigh);
-	precompute_edges_jaccard(seqs, word_table, word_table_csr, kmer_size, tau, neigh);
-
+	auto cres = classify_up_parallel(seqs, word_table, kmer_size, tau);
 	// 阶段B：顺序提交（按长度降序），得到 parent/redundant/centers
 	double t4 = get_time();
-	auto gres = greedy_commit_by_order_already_sorted(seqs, neigh, kmer_size);
+	// 一次性并行压缩到最终中心
+	auto & parent = cres.parent;
+#pragma omp parallel for schedule(static, 1024)
+	for (int i = 0; i < (int)parent.size(); ++i) {
+		if (parent[i] != -1)
+			(void)find_root_compress(parent, i);
+	}
+
+	// 压缩完成后：parent[i]==-1 的是中心；否则 parent[i] 就是最终代表 id
+	int centers = 0;
+	for (int i = 0; i < (int)parent.size(); ++i)
+		if (parent[i] == -1) ++centers;	
 	double t5 = get_time();
 
-	std::cerr << "Greedy (two-stage) centers: " << gres.centers << "\n";
-	std::cerr << "Two-stage jaccard filtering time: " << (t4 - t3) << " s\n";
-	std::cerr << "Two-stage serial commit time: " << (t5 - t4) << " s\n";
+	std::cerr << "Centers (classify-up): " << centers << "\n";
+	std::cerr << "Classify-up time: " << (t4 - t3) << " s\n";
+	std::cerr << "Root compress time: " << (t5 - t4) << " s\n";
 
 	gzclose(fp1);	
 
