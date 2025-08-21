@@ -695,6 +695,12 @@ int main(int argc, char* argv[])
 	cerr << "max seq length:" << max_seq_len << endl;
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
+    /// sort seq by len
+    sort(seqs.begin(), seqs.end(),
+         [](const Sequence& a, const Sequence& b) {
+             return a.seq.size() > b.seq.size();
+         });
+
 	double t3 = get_time();
 	double tau = 0.36;
 	std::vector<std::vector<int>> neigh;
