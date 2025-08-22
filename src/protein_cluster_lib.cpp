@@ -200,7 +200,7 @@ void precompute_edges_jaccard(
 			if (A[i] <= 0) { ++progress; continue; }
 
 			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);  // const &
-			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, A[i]/2, i, counts, visited, out_pairs);
+			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, 0, i, counts, visited, out_pairs);
 
 			for (auto &pr : out_pairs) {
 				int j = pr.first;
@@ -212,12 +212,12 @@ void precompute_edges_jaccard(
 				}
 			}
 
-			int p = ++progress;
-			if ((p % 1000) == 0) {
-				double percent = 100.0 * p / N;
-				std::cout << "\rPhase A (precompute): " << p << "/" << N
-					<< " (" << percent << "%)" << std::flush;
-			}
+//			int p = ++progress;
+//			if ((p % 1000) == 0) {
+//				double percent = 100.0 * p / N;
+//				std::cerr << "\rPhase A (precompute): " << p << "/" << N
+//					<< " (" << percent << "%)" << std::flush;
+//			}
 		}
 	}
 
@@ -234,7 +234,7 @@ void precompute_edges_jaccard(
 		for (auto &e : vec)
 			neigh[e.first].push_back(e.second);
 
-	std::cout << "\n";
+//	std::cerr << "\n";
 }
 
 // 主函数实现
@@ -343,7 +343,7 @@ void cluster_sequences(
 	}
 
 	double t2 = get_time();
-	std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
+	//std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
 
 	// 预计算边缘
 	double t3 = get_time();
@@ -352,7 +352,7 @@ void cluster_sequences(
 
 	size_t total_edges = 0;
 	for (const auto& vec : neigh) total_edges += vec.size();
-	std::cerr << "Total edges: " << total_edges << std::endl;
+	//std::cerr << "Total edges: " << total_edges << std::endl;
 
 	double t4 = get_time();
 
@@ -371,11 +371,11 @@ void cluster_sequences(
 	}
 
 	double t5 = get_time();
-	std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
-	std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
+	//std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
+	//std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
 	//std::cerr << "Number of clusters: " << dsu.sz.size() - std::count(parent.begin(), parent.end(), -1) << std::endl;  // 粗略计数
-	std::unordered_set<int> unique_roots(parent.begin(), parent.end());
-	std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
+	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
+	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
 }
 
 
