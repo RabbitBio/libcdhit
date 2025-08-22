@@ -17,7 +17,11 @@ search_word_table_mt: search_word_table_mt.cpp
 # OpenMP weighted minhash
 search_word_table_mt_wminhash: search_word_table_mt_wminhash.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
-all: build_word_table build_word_table_mt search_word_table_mt search_word_table_mt_wminhash
+
+# OpenMP
+search_word_table_mt_dsu: search_word_table_mt_dsu.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
+all: build_word_table build_word_table_mt search_word_table_mt_dsu search_word_table_mt search_word_table_mt_wminhash
 
 clean:
-	rm -f build_word_table build_word_table_mt search_word_table_mt search_word_table_mt_wminhash
+	rm -f build_word_table build_word_table_mt search_word_table_mt search_word_table_mt_wminhash search_word_table_mt_dsu
