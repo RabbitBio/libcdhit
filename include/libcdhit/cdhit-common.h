@@ -515,7 +515,7 @@ struct WorkingBuffer
 		bool est = options.isEST;
 		size_t m = MAX_UAA * MAX_UAA;
 		size_t max_len = maxlen;
-		size_t band = max_len * max_len;
+		int band = max_len * max_len;
 		if (est) m = m * m;
 		if (band > options.band_width) band = options.band_width;
 		taap.resize(m);
