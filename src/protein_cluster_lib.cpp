@@ -14,6 +14,7 @@
 #include <atomic>
 #include <unordered_map>  // 替换 robin_hood 为 std::unordered_map (若无 robin_hood，可用此；否则添加 #include "robin_hood.h")
 #include <unordered_set>  
+#include <cassert>
 
 using namespace std;
 
@@ -153,7 +154,8 @@ void precompute_edges_jaccard(
 		const std::vector<Sequence_new>& seqs,
 		std::vector<std::vector<std::pair<int,int>>>& word_table,
 		int kmer_size, double tau,
-		std::vector<std::vector<int>>& neigh
+		std::vector<std::vector<int>>& neigh,
+		int nthreads
 		) {
 	const int N = (int)seqs.size();
 	neigh.assign(N, {});
@@ -170,16 +172,16 @@ void precompute_edges_jaccard(
 	}
 
 	std::atomic<int> progress{0};
-	int nthreads = 1;
-#pragma omp parallel
-	{
-#pragma omp single
-		nthreads = omp_get_num_threads();
-	}
+//	int nthreads = 1;
+//#pragma omp parallel
+//	{
+//#pragma omp single
+//		nthreads = omp_get_num_threads();
+//	}
 
 	std::vector<std::vector<std::pair<int,int>>> thread_edges(nthreads);
 
-#pragma omp parallel
+#pragma omp parallel num_threads(nthreads)
 	{
 		int tid = omp_get_thread_num();
 		auto &edges = thread_edges[tid];
@@ -237,17 +239,18 @@ void precompute_edges_jaccard(
 
 // 主函数实现
 void cluster_sequences(
-		const std::vector<Sequence_new>& sequences,
+		std::vector<Sequence_new>& seqs,
 		std::vector<int>& parent,
 		int kmer_size,
 		double tau,
-		int max_num_seqs
+		int nthreads
 		) {
-	std::vector<Sequence_new> seqs = sequences;  // 复制
-	if (max_num_seqs > 0 && (int)seqs.size() > max_num_seqs) {
-		seqs.resize(max_num_seqs);
-	}
+	//std::vector<Sequence_new> seqs = sequences;  // 复制
+//	if (max_num_seqs > 0 && (int)seqs.size() > max_num_seqs) {
+//		seqs.resize(max_num_seqs);
+//	}
 
+	assert(nthreads>=1);
 	InitNAA(MAX_UAA);
 	init_aa_map();
 
@@ -270,19 +273,19 @@ void cluster_sequences(
 	for (int i = 0; i < kmer_size; ++i) table_size *= MAX_UAA;
 	vector<vector<pair<int, int>>> word_table(table_size);
 
-	int nthreads = 1;
-#pragma omp parallel
-	{
-#pragma omp single
-		nthreads = omp_get_num_threads();
-	}
+//	int nthreads = 1;
+//#pragma omp parallel
+//	{
+//#pragma omp single
+//		nthreads = omp_get_num_threads();
+//	}
 
 	vector<vector<vector<pair<int,int>>>> local_tables(
 			nthreads, vector<vector<pair<int,int>>>(table_size)
 			);
 
 	double t1 = get_time();
-#pragma omp parallel
+#pragma omp parallel num_threads(nthreads)
 	{
 		int tid = omp_get_thread_num();
 		auto& local = local_tables[tid];
@@ -309,7 +312,7 @@ void cluster_sequences(
 		}
 	}
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(nthreads)
 	for (long long b = 0; b < (long long)table_size; ++b) {
 		size_t add = 0;
 		for (int t = 0; t < nthreads; ++t)
@@ -330,7 +333,7 @@ void cluster_sequences(
 	}
 
 	// 排序每个 bucket 按 seq_id 降序
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic) num_threads(nthreads)
 	for (size_t i = 0; i < word_table.size(); ++i) {
 		auto& row = word_table[i];
 		std::sort(row.begin(), row.end(),
@@ -345,7 +348,7 @@ void cluster_sequences(
 	// 预计算边缘
 	double t3 = get_time();
 	std::vector<std::vector<int>> neigh;
-	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, neigh);
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, neigh, nthreads);
 
 	size_t total_edges = 0;
 	for (const auto& vec : neigh) total_edges += vec.size();
@@ -360,9 +363,11 @@ void cluster_sequences(
 	}
 
 	// 输出到 parent: parent[i] = root of i (root points to itself)
-	parent.resize(N);
+	// parent.resize(N);
+	/// i = local seq_id
+	/// to global id
 	for (int i = 0; i < N; ++i) {
-		parent[i] = dsu.find(i);
+		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
 	}
 
 	double t5 = get_time();

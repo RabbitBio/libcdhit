@@ -13,11 +13,11 @@ public:
 	void cdhit_cluster(std::vector<Sequence_new>& seq, std::vector<int>& parent, int neededThread);
 };
 void cluster_sequences(
-		const std::vector<Sequence_new>& sequences,
+		std::vector<Sequence_new>& sequences,
 		std::vector<int>& parent,
 		int kmer_size = 5,
 		double tau = 0.36,
-		int max_num_seqs = 0
+		int nthreads = 1
 		);
 
 #endif
