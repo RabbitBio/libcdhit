@@ -305,9 +305,9 @@ void precompute_edges_jaccard(
 
 	std::cout << "\n";
 	double tC = get_time();
-	std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
-	std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
-	std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
+	//std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
+	//std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
+	//std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
 }
 
 
@@ -410,7 +410,7 @@ void cluster_sequences(
 	}
 
 	double t2 = get_time();
-	std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
+	//std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
 
 	// 预计算边缘
 	double t3 = get_time();
@@ -439,10 +439,10 @@ void cluster_sequences(
 	}
 
 	double t5 = get_time();
-	std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
-	std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
-	std::unordered_set<int> unique_roots(parent.begin(), parent.end());
-	std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
+	//std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
+	//std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
+	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
+	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
 }
 
 
