@@ -446,7 +446,7 @@ int main(int argc, char* argv[])
 	
 		Sequence seq;
 		seq.name = ks1->name.s;
-		seq.comment = ks1->comment.s;
+		//seq.comment = ks1->comment.s;
 		seq.seq = ks1->seq.s;
 		char * seq_data = seq.seq.data();
 		for(int i = 0; i < seq.seq.size(); i++)
