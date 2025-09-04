@@ -30,6 +30,8 @@ struct Sequence
 	string name;
 	string comment;
 	string seq;
+
+	int size(){return name.size() + comment.size() + seq.size();};
 };
 
 struct IndexCount
@@ -142,44 +144,6 @@ int EncodeWords(Sequence &seq, vector<int> & word_encodes, vector<int> & word_en
 	return 0;
 }
 
-/// This is modified from cdhit
-int CountWords(int aan_no,
-		vector<int>& word_encodes,
-		vector<int>& word_encodes_no,
-		robin_hood::unordered_map<int, int>& lookCounts,      // 输出：候选目标及公共k-mer数
-		vector<vector<pair<int,int>>>& word_table,
-		int min_rest, int qid)                         // 与原逻辑一致：剩余kmer阈值过滤
-{
-	lookCounts.clear();
-
-	// 2) 按 query 的编码遍历倒排表并累积
-	int j0 = 0;
-	const int* we  = word_encodes.data();
-
-	for (; j0 < aan_no; ++j0) {
-		int bucket = word_encodes[j0];
-		int qcnt   = word_encodes_no[j0];
-		if (qcnt == 0) continue;
-
-		const auto& hits = word_table[bucket];
-		int rest = aan_no - j0 + 1;          // 剩余k-mer数（与原代码一致）
-		for (const auto& hit : hits) {
-			int target_id   = hit.first;           // target seq id
-			if (target_id >= qid) break;
-			int tcnt  = hit.second;          // 该 target 在此 bucket 的计数
-			if (rest < min_rest && !lookCounts.count(target_id)) {
-				continue; // 剪枝：首次遇到且剩余不足
-			}
-			int add   = std::min(qcnt, tcnt);
-			lookCounts[target_id] += add;
-		}
-	}
-
-	// 如果你需要与老代码完全兼容的“哨兵”结尾，可取消注释：
-	// lookCounts.push_back({-1, 0});
-
-	return 0;
-}
 // 仅统计 id<qid（行按 seq_id 升序存储，遇到 >=qid 早停）
 // 输出 out_pairs: vector<pair<tid, C>>
 int CountWords_SA(int aan_no,
@@ -344,51 +308,6 @@ void precompute_edges_jaccard(
 	std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
 }
 
-// ===== 阶段B：顺序提交（贪心增量，长度降序） =====
-struct GreedyResult {
-	std::vector<int>  parent;     // 冗余点的代表；代表自身为 -1
-	std::vector<char> redundant;  // 是否被吸收
-	int centers = 0;              // 代表数量
-};
-
-GreedyResult greedy_commit_by_order_already_sorted(
-		const std::vector<Sequence>& seqs,
-		const std::vector<std::vector<int>>& neigh,
-		int kmer_size
-		)
-{
-	const int N = (int)seqs.size();
-	std::vector<char> redundant(N, 0);
-	std::vector<int>  parent(N, -1);
-
-	double tC0 = get_time();
-	// 注意：seqs 已经按长度降序排好，直接用 i=0..N-1
-	for (int i = 0; i < N; ++i) {
-		if (redundant[i]) continue;   // 若已被更长代表吸收则跳过
-
-		// i 成为代表，吸收它的邻居（仅存了 i<j 的边）
-		for (int v : neigh[i]) {
-			if (!redundant[v]) {
-				redundant[v] = 1;
-				parent[v] = i;
-			}
-		}
-
-		if ((i % 1000) == 0) {
-			double percent = 100.0 * (i+1) / N;
-			std::cout << "\rPhase B (commit): " << (i+1) << "/" << N
-				<< " (" << percent << "%)" << std::flush;
-		}
-	}
-	std::cout << "\n";
-	double tC1 = get_time();
-
-	int centers = 0;
-	for (int i = 0; i < N; ++i) if (!redundant[i]) ++centers;
-
-	std::cerr << "Commit (greedy) time: " << (tC1 - tC0) << " s\n";
-	return { std::move(parent), std::move(redundant), centers };
-}
 
 int main(int argc, char* argv[])
 {
@@ -452,9 +371,14 @@ int main(int argc, char* argv[])
 
 		if(max_num_seqs > 0 && number_seqs >= max_num_seqs) break;
 	}
+	
+	int64_t seq_mem = 0;
+	for(int i = 0; i < seqs.size(); i++)
+		seq_mem += seqs[i].size();
 
 	cerr << "number of sequences: " << seqs.size() << endl;
 	cerr << "max seq length:" << max_seq_len << endl;
+	cerr << "seq mem consumption:" << seq_mem / 1000<< " KB" <<  endl;
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
 
@@ -544,6 +468,7 @@ int main(int argc, char* argv[])
 	local_tables.clear();
 	local_tables.shrink_to_fit();
 
+		
 	//sort each row in word table in ascending order
 #pragma omp parallel for schedule(dynamic)
 	for (size_t i = 0; i < word_table.size(); ++i) {
@@ -567,11 +492,15 @@ int main(int argc, char* argv[])
 	cerr << "Empty buckets in word table: " << empty_no << endl;
 	cerr << "Encode and insert word table time: " << t2 - t1 << " seconds" << endl;
 
+	int64_t word_table_mem = 0;
+	for(int i = 0; i < word_table.size(); i++)
+		word_table_mem += word_table[i].size() * sizeof(int) * 2;
+	cerr << "word_table mem: " << word_table_mem / 1000 << " KB" << endl;
+
 	std::atomic<int> progress{0};
 	long long all_hits = 0;  // 归约变量
 	const int min_rest = 0;  // FIXME: 按需设置
 
-	// ===== 两阶段：A) 并行预计算稀疏图(按阈值存边)  B) 顺序提交（贪心） =====
 
 	// 阶段A：预计算邻接（只存 i>j）
 	double t3 = get_time();
