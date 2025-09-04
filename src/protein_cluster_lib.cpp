@@ -399,6 +399,9 @@ void cluster_sequences(
 		}
 	}
 
+	local_tables.clear();
+	local_tables.shrink_to_fit();
+
 	// 排序每个 bucket 按 seq_id 升序
 #pragma omp parallel for schedule(dynamic) num_threads(nthreads)
 	for (size_t i = 0; i < word_table.size(); ++i) {
