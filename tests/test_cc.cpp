@@ -13,7 +13,7 @@ int main() {
 	std::vector<int> parent;
 	parent.resize(test_seqs.size());
 
-	cluster_sequences(test_seqs, parent, 5, 0.36,1);
+	cluster_sequences_st(test_seqs, parent, 5, 0.36);
 
 	// 打印结果
 	std::cout << "Parent array:" << std::endl;

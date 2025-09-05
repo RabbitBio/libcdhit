@@ -19,5 +19,11 @@ void cluster_sequences(
 		double tau = 0.36,
 		int nthreads = 1
 		);
+void cluster_sequences_st(
+		std::vector<Sequence_new>& sequences,
+		std::vector<int>& parent,
+		int kmer_size = 5,
+		double tau = 0.36
+		);
 
 #endif

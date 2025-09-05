@@ -347,4 +347,96 @@ void cluster_sequences(
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
 }
 
+void cluster_sequences_st(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size,
+		double tau
+		) {
 
+	InitNAA(MAX_UAA);
+	init_aa_map();
+
+	int N = (int)seqs.size();
+	int max_seq_len = 0;
+	for (const auto& s : seqs) {
+		max_seq_len = std::max(max_seq_len, (int)strlen(s.data));
+	}
+
+	// 无预处理映射（data 为 const）
+
+	// 排序序列按长度降序
+	sort(seqs.begin(), seqs.end(),
+			[](const Sequence_new& a, const Sequence_new& b) {
+			return strlen(a.data) > strlen(b.data);
+			});
+
+	// 构建 word_table
+	int table_size = 1;
+	for (int i = 0; i < kmer_size; ++i) table_size *= MAX_UAA;
+
+	vector<vector<pair<int, int>>> word_table(table_size); //TODO: buffering
+	vector<int> word_encodes(max_seq_len);
+	vector<int> word_encodes_no(max_seq_len);
+
+	for (int seq_id = 0; seq_id < N; ++seq_id) {
+		auto& s = seqs[seq_id];
+		int len = strlen(s.data);
+		if (len < kmer_size) continue;
+
+		EncodeWords(s, word_encodes, word_encodes_no, kmer_size);
+
+		int kmer_no = len - kmer_size + 1;
+		for (int j = 0; j < kmer_no; ++j) {
+			int bucket = word_encodes[j];
+			int count = word_encodes_no[j];
+			if (count > 0) {
+				word_table[bucket].emplace_back(seq_id, count);
+			}
+		}
+	}
+
+	// 排序每个 bucket 按 seq_id 升序
+	for (size_t i = 0; i < word_table.size(); ++i) {
+		auto& row = word_table[i];
+		std::sort(row.begin(), row.end(),
+				[](const std::pair<int,int>& a, const std::pair<int,int>& b) {
+				return a.first < b.first;
+				});
+	}
+
+
+	std::vector<int> A(N);//TODO:buffering
+	for (int i = 0; i < N; ++i) {
+		int L = strlen(seqs[i].data);
+		A[i] = std::max(0, L - kmer_size + 1);
+	}
+
+	DSU dsu(seqs.size());
+	std::vector<int> counts(N, 0);                // 线程私有
+	std::vector<int> visited; 
+	visited.reserve(1<<14);       // 线程私有 //TODO: reserve how many?
+	std::vector<std::pair<int,int>> out_pairs;              // 线程私有
+
+	for (int i = 0; i < N; ++i) {
+
+		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
+		CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, 0, i, counts, visited, out_pairs);
+
+		// 只保留 Jaccard 过阈值的边（i>j）
+		for (auto &pr : out_pairs) {
+			int j = pr.first;       // j < i
+			int C = pr.second;
+			double jac = jaccard_from_CAB(C, A[i], A[j]);
+			if (jac >= tau) {
+				dsu.unite(i, j); 
+			}
+		}
+
+	}
+
+	for (int i = 0; i < N; ++i) {
+		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+	}
+
+}
