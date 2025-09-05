@@ -400,7 +400,7 @@ int main(int argc, char* argv[])
 	string res_file = "";
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
-	double tau = 0.36;   // Jaccard 阈值：按需设置
+	double tau = 0.05;   // Jaccard 阈值：按需设置
 
 	auto option_input = app.add_option("-i, --input", filename, "input file name, fasta or gziped fasta formats");
 	auto option_max_n = app.add_option("-n, --max_num_seqs", max_num_seqs, "max number of seqs for building word table");
@@ -416,6 +416,8 @@ int main(int argc, char* argv[])
 
 	InitNAA(MAX_UCA);
 	init_aa_map();
+
+	cerr << "Threshold: " << tau << endl;
 
 	if(NULL == fp1){
 		cerr << "Fail to open file: " << filename << endl;

@@ -319,7 +319,7 @@ int main(int argc, char* argv[])
 	string res_file = "";
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
-	double tau = 0.06;   // Jaccard 阈值：按需设置
+	double tau = 0.05;   // Jaccard 阈值：按需设置
 
 	auto option_input = app.add_option("-i, --input", filename, "input file name, fasta or gziped fasta formats");
 	auto option_max_n = app.add_option("-n, --max_num_seqs", max_num_seqs, "max number of seqs for building word table");
@@ -336,6 +336,8 @@ int main(int argc, char* argv[])
 	InitNAA(MAX_UCA);
 	init_aa_map();
 
+	cerr << "Threshold: " << tau << endl;
+
 	if(NULL == fp1){
 		cerr << "Fail to open file: " << filename << endl;
 		return 0;
@@ -347,6 +349,7 @@ int main(int argc, char* argv[])
 	int64_t pos = 0;
 	int64_t number_seqs = 0;
 	int max_seq_len = 0;
+	int64_t total_len = 0;
 
 	//read fasta to seqs
 	while(1)
@@ -355,6 +358,7 @@ int main(int argc, char* argv[])
 		if(length < 0) break;
 
 		max_seq_len = max<int>(max_seq_len, ks1->seq.l);
+		total_len += ks1->seq.l;
 
 		Sequence seq;
 		seq.name = ks1->name.s;
@@ -378,6 +382,7 @@ int main(int argc, char* argv[])
 
 	cerr << "number of sequences: " << seqs.size() << endl;
 	cerr << "max seq length:" << max_seq_len << endl;
+	cerr << "avg seq length:" << total_len / seqs.size() << endl;
 	cerr << "seq mem consumption:" << seq_mem / 1000<< " KB" <<  endl;
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
