@@ -354,8 +354,8 @@ void cluster_sequences_st(
 		double tau
 		) {
 
-	InitNAA(MAX_UAA);
-	init_aa_map();
+	InitNAA(MAX_UAA); //TODO:move out
+	init_aa_map(); //TODO:move out
 
 	int N = (int)seqs.size();
 	int max_seq_len = 0;
@@ -412,11 +412,11 @@ void cluster_sequences_st(
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
-	DSU dsu(seqs.size());
-	std::vector<int> counts(N, 0);                // 线程私有
-	std::vector<int> visited; 
-	visited.reserve(1<<14);       // 线程私有 //TODO: reserve how many?
-	std::vector<std::pair<int,int>> out_pairs;              // 线程私有
+	DSU dsu(seqs.size()); //buffering
+	std::vector<int> counts(N, 0);//buffering
+	std::vector<int> visited; //buffering
+	visited.reserve(1<<14);   //TODO: reserve how many?
+	std::vector<std::pair<int,int>> out_pairs; //buffering             
 
 	for (int i = 0; i < N; ++i) {
 

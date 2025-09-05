@@ -33,7 +33,7 @@ target_link_libraries(test_cdhit PRIVATE cdhitlib OpenMP::OpenMP_CXX)
 
 add_executable(test_cc tests/test_cc.cpp)
 target_include_directories(test_cc PRIVATE ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(test_cc PRIVATE cdhitlib OpenMP::OpenMP_CXX)
+target_link_libraries(test_cc PRIVATE z cdhitlib OpenMP::OpenMP_CXX)
 
 install(TARGETS ${LIB_NAME} DESTINATION lib)
 install(DIRECTORY ${INCLUDE_DIR}/ DESTINATION include/libcdhit)
