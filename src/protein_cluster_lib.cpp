@@ -133,93 +133,6 @@ int CountWords_SA(int aan_no,
 	}
 	return 0;
 }
-// precompute_edges_jaccard 函数（调整为 Sequence_new）
-//void precompute_edges_jaccard(
-//		const std::vector<Sequence_new>& seqs,
-//		std::vector<std::vector<std::pair<int,int>>>& word_table,
-//		int kmer_size, double tau,
-//		std::vector<std::vector<int>>& neigh,
-//		int nthreads
-//		) {
-//	const int N = (int)seqs.size();
-//	neigh.assign(N, {});
-//
-//	std::vector<int> A(N);
-//	for (int i = 0; i < N; ++i) {
-//		int L = strlen(seqs[i].data);  // 使用 strlen
-//		A[i] = std::max(0, L - kmer_size + 1);
-//	}
-//
-//	size_t max_len = 0;
-//	for (auto& s : seqs) {
-//		max_len = std::max(max_len, strlen(s.data));  // 使用 strlen
-//	}
-//
-//	std::atomic<int> progress{0};
-////	int nthreads = 1;
-////#pragma omp parallel
-////	{
-////#pragma omp single
-////		nthreads = omp_get_num_threads();
-////	}
-//
-//	std::vector<std::vector<std::pair<int,int>>> thread_edges(nthreads);
-//
-//#pragma omp parallel num_threads(nthreads)
-//	{
-//		int tid = omp_get_thread_num();
-//		auto &edges = thread_edges[tid];
-//		edges.clear();
-//		edges.reserve(1<<20);
-//
-//		std::vector<int> word_encodes(max_len);
-//		std::vector<int> word_encodes_no(max_len);
-//
-//		std::vector<int> counts(seqs.size(), 0);
-//		std::vector<int> visited; visited.reserve(1<<14);
-//		std::vector<std::pair<int,int>> out_pairs;
-//
-//#pragma omp for schedule(dynamic,1)
-//		for (int i = 0; i < N; ++i) {
-//			if (A[i] <= 0) { ++progress; continue; }
-//
-//			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);  // const &
-//			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, A[i]/2, i, counts, visited, out_pairs);
-//
-//			for (auto &pr : out_pairs) {
-//				int j = pr.first;
-//				if (A[j] <= 0) continue;
-//				int C = pr.second;
-//				double jac = jaccard_from_CAB(C, A[i], A[j]);
-//				if (jac >= tau) {
-//					edges.emplace_back(i, j);
-//				}
-//			}
-//
-//			int p = ++progress;
-//			if ((p % 1000) == 0) {
-//				double percent = 100.0 * p / N;
-//				std::cout << "\rPhase A (precompute): " << p << "/" << N
-//					<< " (" << percent << "%)" << std::flush;
-//			}
-//		}
-//	}
-//
-//	// 合并边
-//	std::vector<size_t> cnt(N, 0);
-//	for (auto &vec : thread_edges)
-//		for (auto &e : vec)
-//			++cnt[e.first];
-//
-//	for (int u = 0; u < N; ++u)
-//		if (cnt[u]) neigh[u].reserve(neigh[u].size() + cnt[u]);
-//
-//	for (auto &vec : thread_edges)
-//		for (auto &e : vec)
-//			neigh[e.first].push_back(e.second);
-//
-//	std::cout << "\n";
-//}
 
 void precompute_edges_jaccard(
 		const std::vector<Sequence_new>& seqs,
@@ -249,16 +162,16 @@ void precompute_edges_jaccard(
 	// 每个线程一个本地 DSU
 	std::vector<DSU> thread_dsu(nthreads, DSU(N));
 
-#pragma omp parallel
+#pragma omp parallel num_threads(nthreads)
 	{
 		int tid = omp_get_thread_num();
 
 		std::vector<int> word_encodes(max_len);
 		std::vector<int> word_encodes_no(max_len);
-		//robin_hood::unordered_map<int,int> local;
 
 		std::vector<int> counts(N, 0);                // 线程私有
-		std::vector<int> visited; visited.reserve(1<<14);       // 线程私有
+		std::vector<int> visited; 
+		visited.reserve(1<<14);       // 线程私有 //TODO: reserve how many?
 		std::vector<std::pair<int,int>> out_pairs;              // 线程私有
 
 
@@ -267,8 +180,6 @@ void precompute_edges_jaccard(
 			if (A[i] <= 0) { ++progress; continue; }
 
 			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
-			//local.clear();
-			//CountWords(A[i], word_encodes, word_encodes_no, local, word_table, /*min_rest=*/0, i);
 			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, 0, i, counts, visited, out_pairs);
 
 			// 只保留 Jaccard 过阈值的边（i>j）
@@ -294,7 +205,7 @@ void precompute_edges_jaccard(
 	double tB = get_time();
 	// ===== 合并阶段（单线程）=====
 	// 合并所有线程的 DSU
-	global_dsu = thread_dsu[0];
+	global_dsu = std::move(thread_dsu[0]);
 	for (int t = 1; t < nthreads; ++t) {
 		for (int i = 0; i < N; ++i) {
 			int rg = global_dsu.find(i);
@@ -319,12 +230,9 @@ void cluster_sequences(
 		double tau,
 		int nthreads
 		) {
-	//std::vector<Sequence_new> seqs = sequences;  // 复制
-//	if (max_num_seqs > 0 && (int)seqs.size() > max_num_seqs) {
-//		seqs.resize(max_num_seqs);
-//	}
 
 	assert(nthreads>=1);
+
 	InitNAA(MAX_UAA);
 	init_aa_map();
 
@@ -345,11 +253,12 @@ void cluster_sequences(
 	// 构建 word_table
 	int table_size = 1;
 	for (int i = 0; i < kmer_size; ++i) table_size *= MAX_UAA;
-	vector<vector<pair<int, int>>> word_table(table_size);
+
+	vector<vector<pair<int, int>>> word_table(table_size); //TODO: buffering
 
 	vector<vector<vector<pair<int,int>>>> local_tables(
 			nthreads, vector<vector<pair<int,int>>>(table_size)
-			);
+			);//TODO: buffering
 
 	double t1 = get_time();
 #pragma omp parallel num_threads(nthreads)
@@ -417,23 +326,13 @@ void cluster_sequences(
 
 	// 预计算边缘
 	double t3 = get_time();
-	//std::vector<std::vector<int>> neigh;
-	DSU dsu(seqs.size());
-	//precompute_edges_jaccard(seqs, word_table, kmer_size, tau, neigh, nthreads);
+
+	//DSU dsu(seqs.size());
+	DSU dsu;
 	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads);
 
-	//size_t total_edges = 0;
-	//for (const auto& vec : neigh) total_edges += vec.size();
-	//std::cerr << "Total edges: " << total_edges << std::endl;
-
 	double t4 = get_time();
-
-	// DSU 聚类
-	//DSU dsu(N);
-	//for (int u = 0; u < N; ++u) {
-	//	for (int v : neigh[u]) dsu.unite(u, v);
-	//}
-
+	
 	// 输出到 parent: parent[i] = root of i (root points to itself)
 	/// i = local seq_id
 	/// to global id
