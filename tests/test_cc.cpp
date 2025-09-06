@@ -37,12 +37,14 @@ int main(int argc, char* argv[])
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
 	double tau = 0.05;   // Jaccard 阈值：按需设置
+	bool mem_reuse = false;
 
 	auto option_input = app.add_option("-i, --input", filename, "input file name, fasta or gziped fasta formats");
 	auto option_max_n = app.add_option("-n, --max_num_seqs", max_num_seqs, "max number of seqs for building word table");
 	auto option_k = app.add_option("-k, --kmer_size", kmer_size, "set kmer size, default 5.");
 	auto option_tau = app.add_option("-t, --jaccard_thres", tau, "set weighted jaccard threshold, default 0.36.");
 	auto option_output = app.add_option("-o, --output", res_file, "output files");
+	auto option_m = app.add_flag("-m, --mem_reuse", mem_reuse, "enable memory reuse");
 
 	option_input->required();
 
@@ -89,8 +91,15 @@ int main(int argc, char* argv[])
 	std::vector<int> parent;
 	parent.resize(seqs.size());
 
+	/// init buffer
+
 	double t1 = get_time();
-	cluster_sequences_st(seqs, parent, kmer_size, tau);
+	if(mem_reuse){
+		ClusterWS ws;  // 创建一次，后面多次调用都复用
+		cluster_sequences_st_reuse(seqs, parent, kmer_size, tau, ws);
+	}else{
+		cluster_sequences_st(seqs, parent, kmer_size, tau);
+	}
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;

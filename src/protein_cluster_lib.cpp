@@ -519,14 +519,20 @@ void cluster_sequences_st(
 			});
 
 	// —— 改为基于 hashmap 的稀疏 word table ——
-	robin_hood::unordered_map<int, std::vector<std::pair<int,int>>> word_table;
 	// 估计一个合理的 bucket 数量做 reserve（经验值，可按数据集调）
 	// 假设平均每条序列有 ~ (len - k + 1) 个 k-mer，且有一定重复：
 	// 这里保守按 N*8 预留，避免频繁 rehash（不强制）
+	robin_hood::unordered_map<int, std::vector<std::pair<int,int>>> word_table;
 	word_table.reserve(std::max(16, N * 8));
 
 	std::vector<int> word_encodes(max_seq_len);
 	std::vector<int> word_encodes_no(max_seq_len);
+	std::vector<int> A(N);
+
+	DSU dsu(seqs.size());
+	std::vector<int> counts(N, 0);
+	std::vector<int> visited;  visited.reserve(1<<14);
+	std::vector<std::pair<int,int>> out_pairs;
 
 	// 构建稀疏表：只为实际出现的 bucket 建立项
 	for (int seq_id = 0; seq_id < N; ++seq_id) {
@@ -556,16 +562,11 @@ void cluster_sequences_st(
 	}
 
 	// 预计算每条序列的 A[i] = 有效 k-mer 数（重复保留；与你原逻辑一致）
-	std::vector<int> A(N);
 	for (int i = 0; i < N; ++i) {
 		const int L = (int)strlen(seqs[i].data);
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
-	DSU dsu(seqs.size());
-	std::vector<int> counts(N, 0);
-	std::vector<int> visited;  visited.reserve(1<<14);
-	std::vector<std::pair<int,int>> out_pairs;
 
 	for (int i = 0; i < N; ++i) {
 		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
@@ -591,3 +592,123 @@ void cluster_sequences_st(
 		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
 	}
 }
+
+void cluster_sequences_st_reuse(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size,
+		double tau,
+		ClusterWS& ws)   // ← 复用工作区
+{
+	InitNAA(MAX_UAA); // TODO: 可外移到更高层，仅需一次
+	init_aa_map();    // TODO: 可外移到更高层，仅需一次
+
+	const int N = (int)seqs.size();
+	int max_seq_len = 0;
+	for (auto& s : seqs) {
+		s.length = (int)strlen(s.data);
+		if (s.length > max_seq_len) max_seq_len = s.length;
+	}
+
+	// 预留所有需要的内存（只做 resize/clear，不频繁分配）
+	ws.reserve_for(N, max_seq_len);
+	ws.clear_word_table_rows_keep_capacity();
+
+	// 按长度降序
+	std::sort(seqs.begin(), seqs.end(),
+			[](const Sequence_new& a, const Sequence_new& b){
+			return a.length > b.length;
+			});
+
+	// —— 构建稀疏倒排（复用 map 与每个 bucket 的 capacity）——
+	for (int seq_id = 0; seq_id < N; ++seq_id) {
+		const auto& s = seqs[seq_id];
+		const int len = s.length;
+		if (len < kmer_size) continue;
+
+		EncodeWords(s, ws.word_encodes, ws.word_encodes_no, kmer_size);
+		const int kmer_no = len - kmer_size + 1;
+
+		for (int j = 0; j < kmer_no; ++j) {
+			const int bucket = ws.word_encodes[j];
+			const int count  = ws.word_encodes_no[j];
+			if (count > 0) {
+				auto& row = ws.word_table[bucket];  // 若不存在会构造一次 vector
+				row.emplace_back(seq_id, count);
+			}
+		}
+	}
+
+	// 每个 bucket 内按 seq_id 升序（保证仅扫 id<qid 可及早终止）
+	for (auto& kv : ws.word_table) {
+		auto& row = kv.second;
+		if (!row.empty()) {
+			std::sort(row.begin(), row.end(),
+					[](const std::pair<int,int>& a, const std::pair<int,int>& b){
+					return a.first < b.first;
+					});
+		}
+	}
+
+	// 预计算 A[i] = 有效 k-mer 数
+	for (int i = 0; i < N; ++i) {
+		ws.A[i] = std::max(0, seqs[i].length - kmer_size + 1);
+	}
+
+	DSU dsu(N);
+
+	// —— 计数 + 剪枝 + 验证（复用 counts/visited/out_pairs）——
+	for (int i = 0; i < N; ++i) {
+		const int Li = ws.A[i];
+		if (Li <= 0) continue;
+
+		EncodeWords(seqs[i], ws.word_encodes, ws.word_encodes_no, kmer_size);
+
+		// 这里调用你带“过滤/剪枝”的版本（若用基础版也可）：
+		//CountWords_SA(
+		//		/*aan_no=*/Li,
+		//		/*word_encodes=*/ws.word_encodes,
+		//		/*word_encodes_no=*/ws.word_encodes_no,
+		//		/*word_table=*/ws.word_table,
+		//		/*min_rest=*/0,
+		//		/*qid=*/i,
+		//		/*counts=*/ws.counts,
+		//		/*visited=*/ws.visited,
+		//		/*out_pairs=*/ws.out_pairs,
+		//		/*A=*/ws.A,         // 启用长度过滤/上界剪枝
+		//		/*tau=*/tau,
+		//		/*enable_hf_cut=*/false,
+		//		/*hf_cutoff=*/std::numeric_limits<int>::max()
+		//		);
+		CountWords_SA(
+				/*aan_no=*/Li,
+				/*word_encodes=*/ws.word_encodes,
+				/*word_encodes_no=*/ws.word_encodes_no,
+				/*word_table=*/ws.word_table,
+				/*min_rest=*/0,
+				/*qid=*/i,
+				/*counts=*/ws.counts,
+				/*visited=*/ws.visited,
+				/*out_pairs=*/ws.out_pairs
+				);
+
+		// 验证并建边（仍只连 j<i）
+		for (auto &pr : ws.out_pairs) {
+			const int j = pr.first;   // j < i
+			const int C = pr.second;
+			const double jac = jaccard_from_CAB(C, ws.A[i], ws.A[j]);
+			if (jac >= tau) dsu.unite(i, j);
+		}
+
+		// 为下一轮计数做准备（CountWords_SA 已经把 counts[tid] 清零过）
+		ws.out_pairs.clear();
+		ws.visited.clear();
+	}
+
+	// 写回代表元（保持与原始 seq_id 的对应）
+	parent.resize(N);
+	for (int i = 0; i < N; ++i) {
+		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+	}
+}
+
