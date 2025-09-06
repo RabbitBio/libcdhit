@@ -12,7 +12,8 @@
 #include <cassert>
 #include <sys/time.h>
 #include <atomic>
-#include <unordered_map>  // 替换 robin_hood 为 std::unordered_map (若无 robin_hood，可用此；否则添加 #include "robin_hood.h")
+#include <unordered_map>  // 替换 robin_hood 为 std::unordered_map (若无 robin_hood，可用此；否则添加 
+#include "robin_hood.h"
 #include <unordered_set>  
 #include <cassert>
 
@@ -121,6 +122,60 @@ int CountWords_SA(int aan_no,
 
 			if (min_rest > 0 && rest < min_rest && counts[tid] == 0) continue;
 			int add = (qcnt < tcnt) ? qcnt : tcnt;
+			add_count(tid, add);
+		}
+	}
+
+	// 导出并清零
+	out_pairs.reserve(visited.size());
+	for (int tid : visited) {
+		out_pairs.emplace_back(tid, counts[tid]);
+		counts[tid] = 0;
+	}
+	return 0;
+}
+
+//using WordTable = std::unordered_map<int, std::vector<std::pair<int,int>>>;
+int CountWords_SA(
+		int aan_no,
+		const std::vector<int>& word_encodes,
+		const std::vector<int>& word_encodes_no,
+		robin_hood::unordered_map<int, std::vector<std::pair<int,int>>> & word_table,   // 修改：由 vector<vector<...>> 改为 unordered_map
+		int min_rest,
+		int qid,
+		// 稀疏累加器（线程私有）
+		std::vector<int>& counts,
+		std::vector<int>& visited,
+		std::vector<std::pair<int,int>>& out_pairs)
+{
+	out_pairs.clear();
+	visited.clear();
+	if (aan_no <= 0) return 0;
+
+	auto add_count = [&](int tid, int add){
+		if (counts[tid] == 0) visited.push_back(tid);
+		counts[tid] += add;
+	};
+
+	for (int j0 = 0; j0 < aan_no; ++j0) {
+		const int bucket = word_encodes[j0];
+		const int qcnt   = word_encodes_no[j0];
+		if (qcnt == 0) continue;
+
+		const int rest = aan_no - j0 + 1;
+
+		// 用 find()，没有该 bucket 就跳过；不会插入空向量
+		auto it = word_table.find(bucket);
+		if (it == word_table.end()) continue;
+
+		const auto& hits = it->second;  // 已保证按 seq_id 升序
+		for (size_t k = 0; k < hits.size(); ++k) {
+			const int tid  = hits[k].first;
+			if (tid >= qid) break;      // 及早终止：只扫 id<qid
+			const int tcnt = hits[k].second;
+
+			if (min_rest > 0 && rest < min_rest && counts[tid] == 0) continue;
+			const int add = (qcnt < tcnt) ? qcnt : tcnt;
 			add_count(tid, add);
 		}
 	}
@@ -347,7 +402,7 @@ void cluster_sequences(
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
 }
 
-void cluster_sequences_st(
+void cluster_sequences_st_old(
 		std::vector<Sequence_new>& seqs,
 		std::vector<int>& parent,
 		int kmer_size,
@@ -439,4 +494,98 @@ void cluster_sequences_st(
 		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
 	}
 
+}
+void cluster_sequences_st(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size,
+		double tau)
+{
+	InitNAA(MAX_UAA); // TODO: 可外移
+	init_aa_map();    // TODO: 可外移
+
+	const int N = (int)seqs.size();
+	int max_seq_len = 0;
+	for (const auto& s : seqs) {
+		max_seq_len = std::max(max_seq_len, (int)strlen(s.data));
+	}
+
+	// 按长度降序
+	std::sort(seqs.begin(), seqs.end(),
+			[](const Sequence_new& a, const Sequence_new& b){
+			return strlen(a.data) > strlen(b.data);
+			});
+
+	// —— 改为基于 hashmap 的稀疏 word table ——
+	robin_hood::unordered_map<int, std::vector<std::pair<int,int>>> word_table;
+	// 估计一个合理的 bucket 数量做 reserve（经验值，可按数据集调）
+	// 假设平均每条序列有 ~ (len - k + 1) 个 k-mer，且有一定重复：
+	// 这里保守按 N*8 预留，避免频繁 rehash（不强制）
+	word_table.reserve(std::max(16, N * 8));
+
+	std::vector<int> word_encodes(max_seq_len);
+	std::vector<int> word_encodes_no(max_seq_len);
+
+	// 构建稀疏表：只为实际出现的 bucket 建立项
+	for (int seq_id = 0; seq_id < N; ++seq_id) {
+		const auto& s = seqs[seq_id];
+		const int len = (int)strlen(s.data);
+		if (len < kmer_size) continue;
+
+		EncodeWords(s, word_encodes, word_encodes_no, kmer_size);
+		const int kmer_no = len - kmer_size + 1;
+
+		for (int j = 0; j < kmer_no; ++j) {
+			const int bucket = word_encodes[j];
+			const int count  = word_encodes_no[j];
+			if (count > 0) {
+				word_table[bucket].emplace_back(seq_id, count);
+			}
+		}
+	}
+
+	// 每个 bucket 内按 seq_id 升序，保证 CountWords_SA 的“及早终止”成立
+	for (auto& kv : word_table) {
+		auto& row = kv.second;
+		std::sort(row.begin(), row.end(),
+				[](const std::pair<int,int>& a, const std::pair<int,int>& b){
+				return a.first < b.first;
+				});
+	}
+
+	// 预计算每条序列的 A[i] = 有效 k-mer 数（重复保留；与你原逻辑一致）
+	std::vector<int> A(N);
+	for (int i = 0; i < N; ++i) {
+		const int L = (int)strlen(seqs[i].data);
+		A[i] = std::max(0, L - kmer_size + 1);
+	}
+
+	DSU dsu(seqs.size());
+	std::vector<int> counts(N, 0);
+	std::vector<int> visited;  visited.reserve(1<<14);
+	std::vector<std::pair<int,int>> out_pairs;
+
+	for (int i = 0; i < N; ++i) {
+		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
+
+		// 调用修改后的 hashmap 版本
+		CountWords_SA(A[i], word_encodes, word_encodes_no,
+				word_table, /*min_rest=*/0, /*qid=*/i,
+				counts, visited, out_pairs);
+
+		// 只保留 Jaccard 过阈值的边（i>j）
+		for (auto &pr : out_pairs) {
+			const int j = pr.first;   // j < i
+			const int C = pr.second;
+			const double jac = jaccard_from_CAB(C, A[i], A[j]);
+			if (jac >= tau) {
+				dsu.unite(i, j);
+			}
+		}
+	}
+
+	// 写回代表元（保持与原始 seq_id 的对应）
+	for (int i = 0; i < N; ++i) {
+		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+	}
 }

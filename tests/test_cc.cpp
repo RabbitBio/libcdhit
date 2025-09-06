@@ -104,6 +104,7 @@ int main(int argc, char* argv[])
 	cerr << "Number of clusters: " << roots.size() << endl;
 	cerr << "Clustering time: " << t2 - t1 << " s" << endl;
 	cerr << "Avg seq per second: " << (double)number_seqs / (t2 - t1) << endl;
+	cerr << "Avg time(ms) per seq: " << (t2 - t1) / (double)number_seqs * 1000 << " ms" <<  endl;
 
 	return 0;
 }
