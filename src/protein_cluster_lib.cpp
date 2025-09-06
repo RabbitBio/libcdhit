@@ -506,14 +506,16 @@ void cluster_sequences_st(
 
 	const int N = (int)seqs.size();
 	int max_seq_len = 0;
-	for (const auto& s : seqs) {
-		max_seq_len = std::max(max_seq_len, (int)strlen(s.data));
+	for (auto& s : seqs) {
+		s.length = strlen(s.data);
+		max_seq_len = std::max(max_seq_len, s.length);
 	}
 
 	// 按长度降序
 	std::sort(seqs.begin(), seqs.end(),
 			[](const Sequence_new& a, const Sequence_new& b){
-			return strlen(a.data) > strlen(b.data);
+			//return strlen(a.data) > strlen(b.data);
+			return a.length > b.length;
 			});
 
 	// —— 改为基于 hashmap 的稀疏 word table ——
@@ -529,7 +531,7 @@ void cluster_sequences_st(
 	// 构建稀疏表：只为实际出现的 bucket 建立项
 	for (int seq_id = 0; seq_id < N; ++seq_id) {
 		const auto& s = seqs[seq_id];
-		const int len = (int)strlen(s.data);
+		const int len = s.length;
 		if (len < kmer_size) continue;
 
 		EncodeWords(s, word_encodes, word_encodes_no, kmer_size);
