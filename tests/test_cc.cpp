@@ -84,13 +84,28 @@ int main(int argc, char* argv[])
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
 
+/// init cc clustering buffer
+	int nthreads = 2;
 
+	cerr << "Threads: " << nthreads << endl;
+	vector<ClusterBuffer> buffs(nthreads, ClusterBuffer(seqs.size(), kmer_size, max_seq_len));
+	cerr << "init buffer " << endl;
 /// call clustering api
 	std::vector<int> parent;
 	parent.resize(seqs.size());
 
 	double t1 = get_time();
-	cluster_sequences_st(seqs, parent, kmer_size, tau);
+	int chunk = 1000;
+	#pragma omp parallel for num_threads(nthreads) shared(parent, buffs)
+	for(int i = 0; i < seqs.size(); i+=chunk)
+	{
+		int tid = omp_get_thread_num();
+		cerr << "tid: " << tid << endl;
+		buffs[tid].clear();
+		cerr << "after clear()" << endl;
+		vector<Sequence_new> seqs_local(seqs.begin() + i, seqs.begin()+i+chunk);
+		cluster_sequences_st(buffs[tid], seqs_local, parent, kmer_size, tau);
+	}
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;

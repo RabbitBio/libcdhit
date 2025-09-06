@@ -348,22 +348,32 @@ void cluster_sequences(
 }
 
 void cluster_sequences_st(
+		ClusterBuffer &buff,
 		std::vector<Sequence_new>& seqs,
 		std::vector<int>& parent,
 		int kmer_size,
 		double tau
 		) {
+	/// using buffer and init buffer
+	int max_seq_len = buff.max_seq_len;
+	int N = (int)seqs.size();
+
+	vector<vector<pair<int, int>>> & word_table = buff.word_table;
+
+	vector<int> & word_encodes = buff.word_encodes;
+	vector<int> & word_encodes_no = buff.word_encodes_no;
+	std::vector<std::pair<int,int>> & out_pairs = buff.out_pairs;
+	std::vector<int> & visited = buff.visited;
+
+	std::vector<int> & counts = buff.counts;
+	counts.resize(N);
+	for(int i = 0; i < N; i++) counts[i] = 0;
+
+	std::vector<int> & A = buff.A;
+	A.resize(N);
 
 	InitNAA(MAX_UAA); //TODO:move out
 	init_aa_map(); //TODO:move out
-
-	int N = (int)seqs.size();
-	int max_seq_len = 0;
-	for (const auto& s : seqs) {
-		max_seq_len = std::max(max_seq_len, (int)strlen(s.data));
-	}
-
-	// 无预处理映射（data 为 const）
 
 	// 排序序列按长度降序
 	sort(seqs.begin(), seqs.end(),
@@ -372,13 +382,6 @@ void cluster_sequences_st(
 			});
 
 	// 构建 word_table
-	int table_size = 1;
-	for (int i = 0; i < kmer_size; ++i) table_size *= MAX_UAA;
-
-	vector<vector<pair<int, int>>> word_table(table_size); //TODO: buffering
-	vector<int> word_encodes(max_seq_len);
-	vector<int> word_encodes_no(max_seq_len);
-
 	for (int seq_id = 0; seq_id < N; ++seq_id) {
 		auto& s = seqs[seq_id];
 		int len = strlen(s.data);
@@ -405,19 +408,13 @@ void cluster_sequences_st(
 				});
 	}
 
-
-	std::vector<int> A(N);//TODO:buffering
 	for (int i = 0; i < N; ++i) {
 		int L = strlen(seqs[i].data);
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
 	DSU dsu(seqs.size()); //buffering
-	std::vector<int> counts(N, 0);//buffering
-	std::vector<int> visited; //buffering
-	visited.reserve(1<<14);   //TODO: reserve how many?
-	std::vector<std::pair<int,int>> out_pairs; //buffering             
-
+	
 	for (int i = 0; i < N; ++i) {
 
 		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
