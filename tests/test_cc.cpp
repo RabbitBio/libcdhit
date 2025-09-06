@@ -84,12 +84,6 @@ int main(int argc, char* argv[])
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
 
-	//cerr << seqs[0].data << endl;
-
-
-
-
-
 
 /// call clustering api
 	std::vector<int> parent;
@@ -109,6 +103,7 @@ int main(int argc, char* argv[])
 	for (const auto& pr : parent) roots.insert(pr);
 	cerr << "Number of clusters: " << roots.size() << endl;
 	cerr << "Clustering time: " << t2 - t1 << " s" << endl;
+	cerr << "Avg seq per second: " << (double)number_seqs / (t2 - t1) << endl;
 
 	return 0;
 }
