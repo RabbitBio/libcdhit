@@ -26,4 +26,11 @@ void cluster_sequences_st(
 		double tau = 0.36
 		);
 
+void cluster_sequences_st_less10(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size = 5,
+		double tau = 0.36
+		);
+
 #endif

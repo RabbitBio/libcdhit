@@ -347,6 +347,106 @@ void cluster_sequences(
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
 }
 
+template <class T, class U, class Compare = std::less<T>>
+void SortByKey(std::vector<T>& keys, std::vector<U>& vals, Compare comp = Compare{}) {
+    const size_t n = keys.size();
+    if (vals.size() != n) return;
+    if (n <= 1) return;
+
+    std::vector<std::pair<T,U>> items;
+    items.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        items.emplace_back(std::move(keys[i]), std::move(vals[i]));
+    }
+    std::sort(items.begin(), items.end(),
+              [&](const auto& a, const auto& b){ return comp(a.first, b.first); });
+
+    for (size_t i = 0; i < n; ++i) {
+        keys[i] = std::move(items[i].first);
+        vals[i] = std::move(items[i].second);
+    }
+}
+
+void CountWeightedJaccard(
+	const std::vector<int>& keys_i,
+	const std::vector<int>& vals_i,
+	const std::vector<int>& keys_j,
+	const std::vector<int>& vals_j,
+	double& jac
+){
+	size_t idx_i = 0,idx_j = 0;
+	const size_t len_i = keys_i.size(),len_j = keys_j.size();
+	long long inter_val = 0,union_val = 0;
+	while(idx_i<len_i && idx_j<len_j){
+		if(keys_i[idx_i]==keys_j[idx_j]){
+			const int a = vals_i[idx_i];
+            const int b = vals_j[idx_j];
+			inter_val+=std::min(a,b);
+			union_val+=std::max(a,b);
+			idx_i++,idx_j++;
+		}
+		else if(keys_i[idx_i]<keys_j[idx_j]){
+			union_val+=vals_i[idx_i];
+			idx_i++;
+		}
+		else{
+			union_val+=vals_j[idx_j];
+			idx_j++;
+		}
+	}
+	while(idx_i<len_i) { union_val += vals_i[idx_i++]; }
+	while(idx_j<len_j) { union_val += vals_j[idx_j++]; }
+	jac = (union_val!=0)? static_cast<double>(inter_val) / static_cast<double>(union_val) : 0.0;
+}
+
+void cluster_sequences_st_less10(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size,
+		double tau
+		){
+	InitNAA(MAX_UAA);
+	init_aa_map();
+	int N=(int)seqs.size();
+	assert(N<=10);
+
+	int max_seq_len = 0;
+	sort(seqs.begin(), seqs.end(),
+		[](const Sequence_new& a, const Sequence_new& b) {
+		return strlen(a.data) > strlen(b.data);
+		});
+	max_seq_len = strlen(seqs[0].data);
+	
+	vector<vector<int>> word_encodes(N);
+	vector<vector<int>> word_encodes_no(N);
+	
+	for (int seq_id = 0; seq_id < N; ++seq_id) {
+		word_encodes[seq_id].resize(max_seq_len);
+		word_encodes_no[seq_id].resize(max_seq_len);
+		auto& s = seqs[seq_id];
+		int len = strlen(s.data);
+		if (len < kmer_size) continue;
+
+		EncodeWords(s, word_encodes[seq_id], word_encodes_no[seq_id], kmer_size);
+		SortByKey(word_encodes[seq_id],word_encodes_no[seq_id],std::less<int>{});
+	}
+	DSU dsu(N);
+	double jac = 0.0;
+	for(int seq_i=0;seq_i<N;seq_i++){
+		for(int seq_j=0;seq_j<N;seq_j++){
+			if(dsu.find(seq_i)==dsu.find(seq_j)) continue;
+			CountWeightedJaccard(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
+			if(jac>=tau){
+				dsu.unite(seq_i,seq_j);
+			}
+		}
+	}
+	
+	for (int i = 0; i < N; ++i) {
+		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+	}
+}
+
 void cluster_sequences_st(
 		std::vector<Sequence_new>& seqs,
 		std::vector<int>& parent,
