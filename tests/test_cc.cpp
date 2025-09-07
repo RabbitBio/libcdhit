@@ -90,7 +90,7 @@ int main(int argc, char* argv[])
 	parent.resize(seqs.size());
 
 	double t1 = get_time();
-	cluster_sequences_st(seqs, parent, kmer_size, tau);
+	cluster_sequences_st_less10(seqs, parent, kmer_size, tau);
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;
