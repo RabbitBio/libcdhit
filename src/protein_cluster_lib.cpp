@@ -232,7 +232,10 @@ void precompute_edges_jaccard(
 
 #pragma omp for schedule(dynamic,1)
 		for (int i = 0; i < N; ++i) {
-			if (A[i] <= 0) { ++progress; continue; }
+			if (A[i] <= 0) { 
+				//++progress; 
+				continue; 
+			}
 
 			EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
 			CountWords_SA(A[i], word_encodes, word_encodes_no, word_table, 0, i, counts, visited, out_pairs);
@@ -248,15 +251,16 @@ void precompute_edges_jaccard(
 				}
 			}
 
-			int p = ++progress;
-			if ((p % 1000) == 0) {
-				double percent = 100.0 * p / N;
-				std::cout << "\rPhase A (precompute): " << p << "/" << N
-					<< " (" << percent << "%)" << std::flush;
-			}
+			//int p = ++progress;
+			//if ((p % 1000) == 0) {
+			//	double percent = 100.0 * p / N;
+			//	std::cout << "\rPhase A (precompute): " << p << "/" << N
+			//		<< " (" << percent << "%)" << std::flush;
+			//}
 		}
 	} // 并行区结束
 
+	//std::cout << "\n";
 	double tB = get_time();
 	// ===== 合并阶段（单线程）=====
 	// 合并所有线程的 DSU
@@ -269,7 +273,6 @@ void precompute_edges_jaccard(
 		}
 	}
 
-	std::cout << "\n";
 	double tC = get_time();
 	//std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
 	//std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
