@@ -20,8 +20,10 @@
 
 using namespace std;
 
+double sort_time = 0.0;
+
 // 时间函数
-double get_time() {
+static double get_time() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000;
@@ -479,39 +481,6 @@ void EncodeWordsPair(const Sequence_new &seq,std::vector<pair<int,int>>& word_en
     word_encodes.resize(w+1);
 }
 
-void EncodeWordsSoA(const Sequence_new &seq, vector<int> &word_encodes, vector<int> &word_encodes_no, int NAA) {
-    const char* seqi = seq.data;
-    int len = strlen(seqi);
-    int aan_no = len - NAA + 1;
-    int j;
-    unsigned char k, k1;
-    for (j = 0; j < aan_no; j++) {
-        const char* word = seqi + j;
-        int encode = 0;
-        for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) {
-            encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
-        }
-        word_encodes[j] = encode;
-    }
-    std::sort(word_encodes.begin(), word_encodes.end());
-    int w = -1;
-    int i = 0;
-    int current_key = -1;
-    int count = 0;
-    for(i=0;i<aan_no;i++){
-        if(current_key != word_encodes[i]){
-            current_key = word_encodes[i];
-            w++;
-            word_encodes[w] = word_encodes[i];
-            word_encodes_no[w] = 0;
-        }
-        word_encodes_no[w]++;
-    }
-    word_encodes.resize(w+1);
-    word_encodes_no.resize(w+1);
-}
-
-
 
 // template <class T, class U, class Compare = std::less<T>>
 // void SortByKey(std::vector<T>& keys, std::vector<U>& vals, Compare comp = Compare{}) {
@@ -754,6 +723,115 @@ void u32_WeightedJaccard_vector_AVX2(
 }
 #endif
 
+void LSD_sort_8bit(vector<int>& word_encodes,vector<int>& word_encodes_no){
+    // double t1 = get_time();
+    const size_t n = word_encodes.size();
+    if(n<=1){
+        word_encodes_no[0]=1;
+        return;
+    }
+    vector<int> buff(n);
+    vector<int> cnt(256),start(256),next_pos(256);
+    auto pass = [&](int shift, const vector<int>& src, vector<int>& dst) {
+        // 计数
+        fill(cnt.begin(), cnt.end(), 0);
+        for (uint32_t v : src) {
+            uint32_t d = (v >> shift) & 0xFFu;
+            ++cnt[d];
+        }
+        // 前缀（每个桶的起始写入位置）
+        size_t run = 0;
+        for (int d = 0; d < 256; ++d) {
+            start[d] = run;
+            run += cnt[d];
+        }
+        // 稳定分配
+        next_pos = start;
+        for (uint32_t v : src) {
+            uint32_t d = (v >> shift) & 0xFFu;
+            dst[next_pos[d]++] = v;
+        }
+    };
+    pass(0,word_encodes,buff);
+    pass(8,buff,word_encodes);
+    pass(16,word_encodes,buff);
+    word_encodes.swap(buff);
+}
+
+void LSD_sort_11bit(vector<int>& word_encodes,vector<int>& word_encodes_no){
+    const size_t n = word_encodes.size();
+    if(n<=1){
+        word_encodes_no[0]=1;
+        return;
+    }
+    vector<int> buff(n);
+    vector<int> cnt(2048),start(2048),next_pos(2048);
+    auto pass = [&](int shift, const vector<int>& src, vector<int>& dst) {
+        // 计数
+        fill(cnt.begin(), cnt.end(), 0);
+        for (int v : src) {
+            unsigned d = (unsigned(v) >> shift) & 0x7FFu;  // 取 11 位
+            ++cnt[d];
+        }
+        // 前缀：每个桶的起始位置
+        size_t run = 0;
+        for (size_t d = 0; d < 2048; ++d) {
+            start[d] = run;
+            run += cnt[d];
+        }
+        // 稳定分配
+        next_pos = start;
+        for (int v : src) {
+            unsigned d = (unsigned(v) >> shift) & 0x7FFu;
+            dst[next_pos[d]++] = v;
+        }
+    };
+    pass(0,word_encodes,buff);
+    pass(11,buff,word_encodes);
+}
+
+void std_sort(vector<int>& word_encodes,vector<int>&word_encodes_no){
+    double t1 = get_time();
+    sort(word_encodes.begin(),word_encodes.end());
+    double t2 = get_time();
+    sort_time+=t2-t1;
+    cerr << "Sorting time: " << t2 - t1 << " s" << endl;
+}
+
+void MergeKmerFreq(vector<int>& word_encodes,vector<int>&word_encodes_no){
+    int kmer = -1;
+    int w = -1;
+    for(int i=0;i<word_encodes.size();i++){
+        if(word_encodes[i]!=kmer){
+            kmer=word_encodes[i];
+            w++;
+            word_encodes[w]=kmer;
+        }
+        word_encodes_no[w]++;
+    }
+    word_encodes.resize(w+1);
+    word_encodes_no.resize(w+1);
+}
+
+void EncodeWordsSoA(const Sequence_new &seq, vector<int> &word_encodes, vector<int> &word_encodes_no, int NAA) {
+    const char* seqi = seq.data;
+    int len = strlen(seqi);
+    int aan_no = len - NAA + 1;
+    int j;
+    unsigned char k, k1;
+    for (j = 0; j < aan_no; j++) {
+        const char* word = seqi + j;
+        int encode = 0;
+        for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) {
+            encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
+        }
+        word_encodes[j] = encode;
+    }
+    LSD_sort_8bit(word_encodes,word_encodes_no);
+    // std_sort(word_encodes,word_encodes_no);
+    MergeKmerFreq(word_encodes,word_encodes_no);
+}
+
 void cluster_sequences_st_less10(
         std::vector<Sequence_new>& seqs,
         std::vector<int>& parent,
@@ -786,13 +864,6 @@ void cluster_sequences_st_less10(
         EncodeWordsSoA(s,word_encodes[seq_id],word_encodes_no[seq_id],kmer_size);
     }
 
-    // std::cout<<"finished encode for pair"<<std::endl;
-// #ifdef __AVX2__
-// 	cout<<"Use AVX2"<<endl;
-// #else
-// 	cout<<"Use naive"<<endl;
-// #endif
-
     DSU dsu(N);
     double jac = 0.0;
     for(int seq_i=0;seq_i<N;seq_i++){
@@ -814,4 +885,5 @@ void cluster_sequences_st_less10(
     for (int i = 0; i < N; ++i) {
         parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
     }
+    // cerr<<"Sorting total time: "<<sort_time<<" s\n";
 }
