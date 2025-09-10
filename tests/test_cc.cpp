@@ -57,6 +57,12 @@ int main(int argc, char* argv[])
 		return 0;
 	}
 
+#ifdef __AVX2__
+	cout<<"[Use AVX2]\n";
+#else
+	cout<<"[Use Naive]\n";
+#endif
+
 	ks1 = kseq_init(fp1);
 
 
@@ -91,6 +97,7 @@ int main(int argc, char* argv[])
 
 	double t1 = get_time();
 	cluster_sequences_st_less10(seqs, parent, kmer_size, tau);
+	// cluster_sequence_singleThread_smallScale_cArray(seqs, parent, kmer_size, tau);
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;

@@ -20,6 +20,8 @@
 
 using namespace std;
 
+// #define __AVX2__
+
 double sort_time = 0.0;
 
 // 时间函数
@@ -790,12 +792,12 @@ void LSD_sort_11bit(vector<int>& word_encodes,vector<int>& word_encodes_no){
     pass(11,buff,word_encodes);
 }
 
-void std_sort(vector<int>& word_encodes,vector<int>&word_encodes_no){
-    double t1 = get_time();
-    sort(word_encodes.begin(),word_encodes.end());
-    double t2 = get_time();
-    sort_time+=t2-t1;
-    cerr << "Sorting time: " << t2 - t1 << " s" << endl;
+void std_sort(vector<int>& word_encodes,const int len){
+    // double t1 = get_time();
+    sort(word_encodes.begin(),word_encodes.begin()+len);
+    // double t2 = get_time();
+    // sort_time+=t2-t1;
+    // cerr << "Sorting time: " << t2 - t1 << " s" << endl;
 }
 
 void MergeKmerFreq(vector<int>& word_encodes,vector<int>&word_encodes_no){
@@ -827,9 +829,23 @@ void EncodeWordsSoA(const Sequence_new &seq, vector<int> &word_encodes, vector<i
         }
         word_encodes[j] = encode;
     }
+    word_encodes.resize(aan_no);
+    // cout<<"<"<<word_encodes.size()<<", ";
+    
     LSD_sort_8bit(word_encodes,word_encodes_no);
+    // std_sort(word_encodes,aan_no);
+
+    // for(int i=0;i<10;i++){
+    //     cout<<"<"<<word_encodes[i]<<"> ";
+    // }
+    // cout<<"\n";
     // std_sort(word_encodes,word_encodes_no);
     MergeKmerFreq(word_encodes,word_encodes_no);
+    // cout<<word_encodes.size()<<"> "<<endl;
+    // for(int i=0;i<5;i++){
+    //     cout<<"<"<<word_encodes[i]<<", "<<word_encodes_no[i]<<"> ";
+    // }
+    // cout<<"\n";
 }
 
 void cluster_sequences_st_less10(
@@ -876,6 +892,7 @@ void cluster_sequences_st_less10(
         	CountWeightedJaccard_SoA(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
 #endif
             // CountWeightedJaccard_SoA(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
+            // cout<<jac<<endl;
             if(jac>=tau){
                 dsu.unite(seq_i,seq_j);
             }
@@ -885,5 +902,303 @@ void cluster_sequences_st_less10(
     for (int i = 0; i < N; ++i) {
         parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
     }
+    // cerr<<"Sorting total time: "<<sort_time<<" s\n";
+}
+
+void std_sort_cArray(int* word_encodes,const int len){
+    // double t1 = get_time();
+    sort(word_encodes,word_encodes+len);
+    // double t2 = get_time();
+    // sort_time+=t2-t1;
+    // cerr << "Sorting time: " << t2 - t1 << " s" << endl;
+}
+
+void LSD_sort_8bit_cArray(int* word_encodes,const int n){
+    // double t1 = get_time();
+    // const size_t n = word_encodes.size();
+    if(n<=1){
+        return;
+    }
+
+    int* buff = new int[n];
+    // 辅助数组
+    int cnt[256];
+    int start[256];
+    int next_pos[256];
+
+    auto pass = [&](int shift, int* src, int* dst) {
+        // 计数
+        memset(cnt, 0, sizeof(cnt));
+        for (int i = 0; i < n; i++) {
+            uint32_t v = (uint32_t)src[i];
+            uint32_t d = (v >> shift) & 0xFFu;
+            ++cnt[d];
+        }
+        // 前缀和：桶起始位置
+        int run = 0;
+        for (int d = 0; d < 256; d++) {
+            start[d] = run;
+            run += cnt[d];
+        }
+        // 稳定分配
+        memcpy(next_pos, start, sizeof(start));
+        for (int i = 0; i < n; i++) {
+            uint32_t v = (uint32_t)src[i];
+            uint32_t d = (v >> shift) & 0xFFu;
+            dst[next_pos[d]++] = v;
+        }
+    };
+
+    pass(0, word_encodes, buff);
+    pass(8, buff, word_encodes);
+    pass(16, word_encodes, buff);
+
+    // 拷回结果
+    for (int i = 0; i < n; i++) {
+        word_encodes[i] = buff[i];
+    }
+    delete[] buff;
+}
+
+void MergeKmerFreq_cArray(int* word_encodes,int* word_encodes_no,int& len){
+    int kmer = -1;
+    int w = -1;
+    for(int i=0;i<len;i++){
+        if(word_encodes[i]!=kmer){
+            kmer=word_encodes[i];
+            w++;
+            word_encodes[w]=kmer;
+        }
+        word_encodes_no[w]++;
+    }
+    len = w+1;
+}
+
+void EncodeWordsSoA_cArray(
+    const Sequence_new &seq,
+    int* word_encodes,
+    int* word_encodes_no,
+    int& len,
+    int NAA
+){
+    const char* seqi = seq.data;
+    len = strlen(seqi) - NAA + 1;
+    int j;
+    unsigned char k, k1;
+    for (j = 0; j < len; j++) {
+        const char* word = seqi + j;
+        int encode = 0;
+        for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) {
+            encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
+        }
+        word_encodes[j] = encode;
+    }
+    // cout<<"<"<<len<<", "<<endl;
+    // std_sort_cArray(word_encodes,len);
+    LSD_sort_8bit_cArray(word_encodes,len);
+    // for(int i=0;i<10;i++){
+    //     cout<<"<"<<word_encodes[i]<<"> ";
+    // }
+    // cout<<"\n";
+    MergeKmerFreq_cArray(word_encodes,word_encodes_no,len);
+    // cout<<len<<"> "<<endl;
+}
+
+void CountWeightedJaccard_SoA_cArray(
+    const int* seqi,const int* counti,const int len_i,
+    const int* seqj,const int* countj,const int len_j,
+    double& jac
+){
+    size_t idx_i = 0,idx_j = 0;
+    long long inter_val = 0,union_val = 0;
+    while(idx_i<len_i && idx_j<len_j){
+        if(seqi[idx_i]==seqj[idx_j]){
+            const int a = counti[idx_i];
+            const int b = countj[idx_j];
+            inter_val+=std::min(a,b);
+            union_val+=a+b;
+            idx_i++,idx_j++;
+        }
+        else if(seqi[idx_i]<seqj[idx_j]){
+            union_val+=counti[idx_i];
+            idx_i++;
+        }
+        else{
+            union_val+=countj[idx_j];
+            idx_j++;
+        }
+    }
+    while(idx_i<len_i) union_val+=counti[idx_i++];
+    while(idx_j<len_j) union_val+=countj[idx_j++];
+    union_val -= inter_val;
+    // cout<<" "<<inter_val<<" , "<< union_val<<"\t";
+    jac = (union_val!=0)? static_cast<double>(inter_val) / static_cast<double>(union_val) : 0.0;
+}
+
+#ifdef __AVX2__
+
+void u32_WeightedJaccard_vector_AVX2_cArray(
+    const int* ka,const int* fa,const int n,
+    const int* kb,const int* fb,const int m,
+    double& jac
+){
+	// cout<<"use avx2"<<endl;
+    if(n == 0&& m==0){
+        jac = 0.0;
+		// cout<<jac<<endl;
+        return;
+    }
+
+    int union_val = 0;
+    // for(auto v: freqA) union_val+=v;
+    // for(auto v: freqB) union_val+=v;
+    for(int i=0;i<n;i++) union_val += fa[i];
+    for(int i=0;i<m;i++) union_val+=fb[i];
+
+    size_t ia = 0, ib = 0;
+    const size_t st_a = (n/8)*8;
+    const size_t st_b = (m/8)*8;
+    
+    int inter_val = 0;
+    if(n<8||m<8){   
+        inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
+        union_val -= inter_val;
+        jac = (union_val == 0)? 0.0 : (double)inter_val/(double) union_val;
+		// cout<<jac<<endl;
+        return;
+    }
+    
+    const int32_t sh_right = _MM_SHUFFLE(0,3,2,1);
+    const int32_t sh_left  = _MM_SHUFFLE(2,1,0,3);
+    const int32_t sh_between = _MM_SHUFFLE(1,0,3,2);
+
+    while(ia<st_a && ib<st_b){
+        __m256i v_a = _mm256_loadu_si256((const __m256i*)(ka + ia));
+        __m256i v_b = _mm256_loadu_si256((const __m256i*)(kb + ib));
+
+        int a_max = ka[ia+7];
+        int b_max = kb[ib+7];
+        if(a_max<=b_max) ia+=8;
+        if(b_max<=a_max) ib+=8;
+
+        __m256 vb_ps = (__m256) v_b;
+        __m256 vb_r1 = _mm256_permute_ps(vb_ps,sh_right);
+        __m256 vb_bt = _mm256_permute_ps(vb_ps,sh_between);
+        __m256 vb_l1 = _mm256_permute_ps(vb_ps,sh_left);
+
+        // 128bit 半宽
+
+        __m256 vb_sw = _mm256_permute2f128_ps(vb_ps,vb_ps,1);
+        __m256 vb_sw_r1 = _mm256_permute_ps(vb_sw,sh_right);
+        __m256 vb_sw_bt = _mm256_permute_ps(vb_sw,sh_between);
+        __m256 vb_sw_l1 = _mm256_permute_ps(vb_sw,sh_left);
+
+        __m256i cmp0 = _mm256_cmpeq_epi32(v_a,v_b);
+        __m256i cmp1 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_r1);
+        __m256i cmp2 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_bt);
+        __m256i cmp3 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_l1);
+        __m256i cmp4 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw);
+        __m256i cmp5 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_r1);
+        __m256i cmp6 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_bt);
+        __m256i cmp7 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_l1);
+
+        const __m256i cmps[8] = {cmp0,cmp1,cmp2,cmp3,cmp4,cmp5,cmp6,cmp7};
+
+        for(int p=0;p<8;p++){
+            uint32_t mask = (uint32_t)_mm256_movemask_ps((__m256)cmps[p]);
+            while(mask){
+#if defined(__BMI__)
+                uint32_t laneA = (uint32_t)_tzcnt_u32(mask);
+#else
+                uint32_t laneA = (uint32_t)__builtin_ctz(mask);
+#endif
+                mask &= mask - 1;
+                uint32_t laneB = B_LANE_MAP[p][laneA];
+                size_t idxA = (ia-8) + laneA;
+                size_t idxB = (ib-8) + laneB;
+                int freA = fa[idxA];
+                int freB = fa[idxB];
+                inter_val += (freA<freB)? freA:freB;
+            }
+        }
+    }
+    if(ia<n && ib<m){
+        inter_val += u32_weighted_jaccard_scalar_tail(ka+ia,fa+ia,n-ia,kb+ib,fb+ib,m-ib);
+
+    }
+
+    union_val -= inter_val;
+    jac = (union_val==0) ? 0.0 : (double)inter_val/(double)union_val;
+	// cout<<jac<<endl;
+}
+#endif
+
+void cluster_sequence_singleThread_smallScale_cArray(
+    std::vector<Sequence_new>& seqs,
+    std::vector<int>& parent,
+    int kmer_size,
+    double tau
+){
+    InitNAA(MAX_UAA);
+    init_aa_map();
+    int N=(int)seqs.size();
+
+    int max_seq_len = 0;
+    sort(seqs.begin(), seqs.end(),
+        [](const Sequence_new& a, const Sequence_new& b) {
+        return strlen(a.data) > strlen(b.data);
+        });
+    max_seq_len = strlen(seqs[0].data);
+
+    int** word_encodes = new int*[N];
+    int** word_encodes_no = new int*[N];
+    int* buff = new int[max_seq_len];
+    int* lens = new int[N];
+    
+    for (int seq_id = 0; seq_id < N; ++seq_id) {
+        // word_encodes_no[seq_id].resize(max_seq_len);
+        word_encodes[seq_id] = new int[max_seq_len];
+        word_encodes_no[seq_id] = new int[max_seq_len];
+        auto& s = seqs[seq_id];
+        int len = strlen(s.data);
+        if (len < kmer_size) continue;
+        // EncodeWordsPair(s,word_encodes[seq_id],kmer_size);
+        EncodeWordsSoA_cArray(s,word_encodes[seq_id],word_encodes_no[seq_id],lens[seq_id],kmer_size);
+    }
+
+    DSU dsu(N);
+    double jac = 0.0;
+    for(int seq_i=0;seq_i<N;seq_i++){
+        for(int seq_j=seq_i+1;seq_j<N;seq_j++){
+            if(dsu.find(seq_i)==dsu.find(seq_j)) continue;
+			// cout<<"<"<<seq_i<<","<<seq_j<<">\t";
+#ifdef __AVX2__
+			u32_WeightedJaccard_vector_AVX2_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
+                word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
+#else
+        	CountWeightedJaccard_SoA_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
+                word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
+#endif
+            // CountWeightedJaccard_SoA_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
+                // word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
+            // cout<<jac<<endl;
+            if(jac>=tau){
+                dsu.unite(seq_i,seq_j);
+            }
+        }
+    }
+    
+    for (int i = 0; i < N; ++i) {
+        parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+    }
+
+    // free memory
+    for(int i=0;i<N;i++){
+        delete[] word_encodes[i];
+        delete[] word_encodes_no[i];
+    }
+    delete[] word_encodes;
+    delete[] word_encodes_no;
+    delete[] buff;
     // cerr<<"Sorting total time: "<<sort_time<<" s\n";
 }
