@@ -569,6 +569,140 @@ void CountWeightedJaccard_SoA(
 	// cout<<jac<<endl;
 }
 
+static inline int u32_weighted_jaccard_scalar_tail(
+    const int* a, const int* wa, size_t na,
+    const int* b, const int* wb, size_t nb
+){
+    size_t i = 0, j = 0;
+    int inter_val = 0;
+
+    while (i < na && j < nb) {
+        int ka = a[i];
+        int kb = b[j];
+
+        if (ka == kb) {
+            int fa = wa[i];
+            int fb = wb[j];
+            inter_val += (fa < fb) ? fa : fb;
+            ++i; ++j;
+        } else if (ka < kb) {
+            ++i;
+        } else {
+            ++j;
+        }
+    }
+    return inter_val;
+}
+
+// #define __AVX512F__
+#ifdef __AVX512F__
+
+alignas(64) static const int u32_rot_idx[16][16] = {
+    // r = 0
+    {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
+    // r = 1
+    { 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14 },
+    // r = 2
+    { 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13 },
+    // r = 3
+    { 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12 },
+    // r = 4
+    { 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11 },
+    // r = 5
+    { 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10 },
+    // r = 6
+    { 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9 },
+    // r = 7
+    {  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7,  8 },
+    // r = 8
+    {  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6,  7 },
+    // r = 9
+    {  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5,  6 },
+    // r = 10
+    {  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4,  5 },
+    // r = 11
+    {  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3,  4 },
+    // r = 12
+    {  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2,  3 },
+    // r = 13
+    {  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1,  2 },
+    // r = 14
+    {  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0,  1 },
+    // r = 15
+    {  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0 },
+};
+
+void u32_WeightedJaccard_vetcor_AVX512(
+    const vector<int>& keysA,const vector<int>& freqA,
+    const vector<int>& keysB,const vector<int>& freqB,
+    double& jac
+){
+    const size_t n = keysA.size(),m = keysB.size();
+    if (n == 0 && m == 0) { jac = 0.0; return; }
+    assert(n == freqA.size() && m == freqB.size());
+    int union_val = 0;
+    for(int v : freqA) union_val+=v;
+    for(int v : freqB) union_val+=v;
+    const int *ka = keysA.data();
+    const int *kb = keysB.data();
+    const int *fa = freqA.data();
+    const int *fb = freqB.data();
+    
+    size_t ia = 0, ib = 0;
+    const size_t st_a = (n/16)*16;
+    const size_t st_b = (m/16)*16;
+
+    int inter_val;
+    if(n<16||m<16){
+        inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
+        union_val -= inter_val;
+        jac = (union_val==0)? 0.0 : (double)inter_val/(double)union_val;
+        return;
+    }
+
+    alignas(64) int tmp_store[16];
+    while(ia<st_a && ib<st_b){
+        __m512i va_k = _mm512_loadu_si512((const __m512i*)(ka+ia));
+        __m512i va_f = _mm512_loadu_si512((const __m512i*)(fa+ia));
+        __m512i vb_k = _mm512_loadu_si512((const __m512i*)(kb+ib));
+        __m512i vb_f = _mm512_loadu_si512((const __m512i*)(fb+ib));
+
+        int a_max = ka[ia+15];
+        int b_max = kb[ib+15];
+        if(a_max<=b_max) ia+=16;
+        if(b_max<=a_max) ib+=16;
+
+        for (int r = 0; r < 16; ++r) {
+            const __m512i rot_idx = _mm512_load_si512((const __m512i*)u32_rot_idx[r]);
+
+            __m512i vb_k_rot = _mm512_permutexvar_epi32(rot_idx, vb_k);
+            __mmask16 mcmp   = _mm512_cmpeq_epi32_mask(va_k, vb_k_rot);
+            if (mcmp == 0) continue;
+
+            __m512i vb_f_rot = _mm512_permutexvar_epi32(rot_idx, vb_f);
+            __m512i vminf    = _mm512_min_epi32(va_f, vb_f_rot);
+
+            __m512i vsel = _mm512_maskz_mov_epi32(mcmp, vminf);
+            _mm512_store_si512((__m512i*)tmp_store, vsel);
+
+            long long lane_sum = 0;
+            for (int t = 0; t < 16; ++t) lane_sum += tmp_store[t];
+            inter_val += lane_sum;
+        }
+    }
+    if (ia < n && ib < m) {
+        inter_val += u32_weighted_jaccard_scalar_tail(
+            ka + ia, fa + ia, n - ia,
+            kb + ib, fb + ib, m - ib
+        );
+    }
+
+    union_val -= inter_val;
+    jac = (union_val == 0) ? 0.0 : (double)inter_val / (double)union_val;
+}
+
+#endif
+
 #ifdef __AVX2__
 
 // 对应 8 种 v_b 变换下的“b-lane 映射”表：给定 a 的 lane（0..7），返回匹配到的 b 的 lane 下标。
@@ -599,32 +733,6 @@ static constexpr uint8_t B_LANE_MAP[8][8] = {
     // 7: swap + left rot: [5,6,7,4 | 1,2,3,0]
     {5,6,7,4,1,2,3,0},
 };
-
-static inline int u32_weighted_jaccard_scalar_tail(
-    const int* a, const int* wa, size_t na,
-    const int* b, const int* wb, size_t nb
-){
-    size_t i = 0, j = 0;
-    int inter_val = 0;
-
-    while (i < na && j < nb) {
-        int ka = a[i];
-        int kb = b[j];
-
-        if (ka == kb) {
-            int fa = wa[i];
-            int fb = wb[j];
-            inter_val += (fa < fb) ? fa : fb;
-            ++i; ++j;
-        } else if (ka < kb) {
-            ++i;
-        } else {
-            ++j;
-        }
-    }
-    return inter_val;
-}
-
 
 void u32_WeightedJaccard_vector_AVX2(
     const vector<int>& keysA,const vector<int>& freqA,
@@ -709,7 +817,7 @@ void u32_WeightedJaccard_vector_AVX2(
                 size_t idxA = (ia-8) + laneA;
                 size_t idxB = (ib-8) + laneB;
                 int freA = fa[idxA];
-                int freB = fa[idxB];
+                int freB = fb[idxB];
                 inter_val += (freA<freB)? freA:freB;
             }
         }
@@ -886,11 +994,29 @@ void cluster_sequences_st_less10(
         for(int seq_j=seq_i+1;seq_j<N;seq_j++){
             if(dsu.find(seq_i)==dsu.find(seq_j)) continue;
 			// cout<<"<"<<seq_i<<","<<seq_j<<">\t";
-#ifdef __AVX2__
-			u32_WeightedJaccard_vector_AVX2(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
+#if defined(__AVX512F__)
+            // AVX-512 编译：用刚刚写的 AVX512 版本
+            u32_WeightedJaccard_vetcor_AVX512(
+                word_encodes[seq_i], word_encodes_no[seq_i],
+                word_encodes[seq_j], word_encodes_no[seq_j],
+                jac
+            );
+#elif defined(__AVX2__)
+            // AVX2 编译：用已有的 AVX2 版本
+            u32_WeightedJaccard_vector_AVX2(
+                word_encodes[seq_i], word_encodes_no[seq_i],
+                word_encodes[seq_j], word_encodes_no[seq_j],
+                jac
+            );
 #else
-        	CountWeightedJaccard_SoA(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
+            // 既没有 AVX-512 也没有 AVX2：用默认标量/SoA 版本
+            CountWeightedJaccard_SoA(
+                word_encodes[seq_i], word_encodes_no[seq_i],
+                word_encodes[seq_j], word_encodes_no[seq_j],
+                jac
+            );
 #endif
+
             // CountWeightedJaccard_SoA(word_encodes[seq_i],word_encodes_no[seq_i],word_encodes[seq_j],word_encodes_no[seq_j],jac);
             // cout<<jac<<endl;
             if(jac>=tau){
