@@ -782,24 +782,30 @@ void u32_WeightedJaccard_vector_AVX2(
         if(b_max<=a_max) ib+=8;
 
         __m256 vb_ps = (__m256) v_b;
+        __m256i cmp0 = _mm256_cmpeq_epi32(v_a,v_b);
+
         __m256 vb_r1 = _mm256_permute_ps(vb_ps,sh_right);
+        __m256i cmp1 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_r1);
+
         __m256 vb_bt = _mm256_permute_ps(vb_ps,sh_between);
+        __m256i cmp2 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_bt);
+
         __m256 vb_l1 = _mm256_permute_ps(vb_ps,sh_left);
+        __m256i cmp3 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_l1);
 
         // 128bit 半宽
-
         __m256 vb_sw = _mm256_permute2f128_ps(vb_ps,vb_ps,1);
-        __m256 vb_sw_r1 = _mm256_permute_ps(vb_sw,sh_right);
-        __m256 vb_sw_bt = _mm256_permute_ps(vb_sw,sh_between);
-        __m256 vb_sw_l1 = _mm256_permute_ps(vb_sw,sh_left);
-
-        __m256i cmp0 = _mm256_cmpeq_epi32(v_a,v_b);
-        __m256i cmp1 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_r1);
-        __m256i cmp2 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_bt);
-        __m256i cmp3 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_l1);
         __m256i cmp4 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw);
+
+        __m256 vb_sw_r1 = _mm256_permute_ps(vb_sw,sh_right);
         __m256i cmp5 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_r1);
+        
+        
+        __m256 vb_sw_bt = _mm256_permute_ps(vb_sw,sh_between);
         __m256i cmp6 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_bt);
+        
+        
+        __m256 vb_sw_l1 = _mm256_permute_ps(vb_sw,sh_left);
         __m256i cmp7 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_l1);
 
         const __m256i cmps[8] = {cmp0,cmp1,cmp2,cmp3,cmp4,cmp5,cmp6,cmp7};
