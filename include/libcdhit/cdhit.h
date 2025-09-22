@@ -90,4 +90,18 @@ void cluster_sequences_st_reuse(
 		double tau,
 		ClusterWS& ws);
 
+void cluster_sequences_st_less10(
+		std::vector<Sequence_new>& seqs,
+		std::vector<int>& parent,
+		int kmer_size = 5,
+		double tau = 0.36
+		);
+
+void cluster_sequence_singleThread_smallScale_cArray(
+    std::vector<Sequence_new>& seqs,
+    std::vector<int>& parent,
+    int kmer_size,
+    double tau
+);
+
 #endif

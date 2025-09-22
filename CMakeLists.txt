@@ -13,6 +13,16 @@ set(INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include/libcdhit)
 
 set(LIB_NAME cdhitlib)
 
+option(AVX2 "Enable AVX2 optimizations if available" OFF)
+option(AVX512 "Enable AVX512 optimizations if available" OFF)
+if(AVX2)
+    add_compile_options(-mavx2)
+endif()
+if(AVX512)
+    add_compile_options(-mavx512f -mavx512bw -mavx512vl)
+endif()
+
+
 #option(BUILD_SHARED_LIBS "Build shared library" OFF)
 
 file(GLOB_RECURSE SOURCES "${SOURCE_DIR}/*.cpp")
