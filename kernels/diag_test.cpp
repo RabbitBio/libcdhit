@@ -368,6 +368,178 @@ int diag_test_aapn( const char *iseq2, int len1, int len2, WorkingBuffer &buffer
     return 0;
 }
 
+int diag_no_table(
+	const char* seqi, const size_t sizei,
+	const char* seqj, const size_t sizej,
+	WorkingBuffer &buffer,
+    int &best_sum, int band_width, int &band_left, int &band_center, int &band_right,
+    int required_aa1
+){
+	if (sizei < 2 || sizej < 2) {
+        buffer.diag_score.clear();
+        buffer.diag_score2.clear();
+        return 0;
+    }
+    const int len1 = static_cast<int>(sizei) - 1; // 序列1二元对个数
+    const int len2 = static_cast<int>(sizej) - 1; // 序列2二元对个数
+    const int nall = len1 + len2 - 1;
+    if (nall <= 0 || nall > MAX_DIAG) {
+        buffer.diag_score.clear();
+        buffer.diag_score2.clear();
+        return 0;
+    }
+
+    // --- 准备输出打分区 ---
+    buffer.diag_score.assign(nall, 0);
+    buffer.diag_score2.assign(nall, 0);
+    auto& diag_score  = buffer.diag_score;
+    auto& diag_score2 = buffer.diag_score2;
+
+    // --- 构造 (code, pos) 列表，同时统计频次（用于前缀和） ---
+    std::vector<std::pair<int,int>> seqi_list; seqi_list.reserve(len1);
+    std::vector<std::pair<int,int>> seqj_list; seqj_list.reserve(len2);
+
+    // 注意：把 char 转成 unsigned，避免负值
+    std::vector<int> cnt_i(NAA2, 0), cnt_j(NAA2, 0);
+
+    for (int i = 0; i < len1; ++i) {
+        int a = static_cast<unsigned char>(seqi[i]);
+        int b = static_cast<unsigned char>(seqi[i + 1]);
+        int code = a * NAA1 + b;           // 0..NAA2-1
+        seqi_list.emplace_back(code, i);
+        ++cnt_i[code];
+    }
+    for (int j = 0; j < len2; ++j) {
+        int a = static_cast<unsigned char>(seqj[j]);
+        int b = static_cast<unsigned char>(seqj[j + 1]);
+        int code = a * NAA1 + b;
+        seqj_list.emplace_back(code, j);
+        ++cnt_j[code];
+    }
+
+    std::sort(seqi_list.begin(), seqi_list.end());
+    std::sort(seqj_list.begin(), seqj_list.end());
+
+    // --- 建立“前缀和跳转表”：start[c] = 代码块 c 的起始下标；并设哨兵 start[NAA2] = size ---
+    std::vector<int> start_i(NAA2 + 1, 0), start_j(NAA2 + 1, 0);
+    for (int c = 0; c < NAA2; ++c) start_i[c + 1] = start_i[c] + cnt_i[c];
+    for (int c = 0; c < NAA2; ++c) start_j[c + 1] = start_j[c] + cnt_j[c];
+    // 现在：
+    //   seqi 中 code=c 的块区间是 [ start_i[c], start_i[c+1] )
+    //   seqj 中 code=c 的块区间是 [ start_j[c], start_j[c+1] )
+
+    // --- 双指针 + 快速跳转 ---
+    size_t i = 0, j = 0;
+    while (i < seqi_list.size() && j < seqj_list.size()) {
+        int code_i = seqi_list[i].first;
+        int code_j = seqj_list[j].first;
+
+        if (code_i < code_j) {
+            // 一步跳到 seqi 中 code >= code_j 的第一个位置
+            size_t ni = static_cast<size_t>(start_i[code_j]);
+            i = (ni > i ? ni : i); // 防御：保证单调前进
+            if (i >= seqi_list.size()) break;
+            continue;
+        }
+        if (code_i > code_j) {
+            // 一步跳到 seqj 中 code >= code_i 的第一个位置
+            size_t nj = static_cast<size_t>(start_j[code_i]);
+            j = (nj > j ? nj : j);
+            if (j >= seqj_list.size()) break;
+            continue;
+        }
+
+        // code_i == code_j：处理这一个 code 的整块
+        const int code = code_i;
+        size_t i_end = static_cast<size_t>(start_i[code + 1]);
+        size_t j_end = static_cast<size_t>(start_j[code + 1]);
+
+        // 对两个块做笛卡尔积，把票投到对角线
+        for (size_t jj = j; jj < j_end; ++jj) {
+            const int jpos = seqj_list[jj].second;               // seqj 的二元对起点
+            const int i1   = (len1 - 1) + jpos;                  // 对角线坐标偏移
+            const int cpx  = 1 + (seqj[jpos] != seqj[jpos + 1]); // 加权：相同=1，不同=2
+            for (size_t ii = i; ii < i_end; ++ii) {
+                const int ipos = seqi_list[ii].second;           // seqi 的二元对起点
+                const int d    = i1 - ipos;                      // 对角线下标 0..nall-1
+                if ((unsigned)d < (unsigned)nall) {
+                    diag_score[d]  += 1;
+                    diag_score2[d] += cpx;
+                }
+            }
+        }
+
+        // 整块处理完，一次性跳到块末尾
+        i = i_end;
+        j = j_end;
+    }
+	int band_b = required_aa1 - 1 >= 0 ? required_aa1 - 1 : 0;
+    int band_e = nall - band_b;
+
+    int band_m = (band_b + band_width - 1 < band_e) ? band_b + band_width - 1 : band_e;
+    int best_score = 0;
+    int best_score2 = 0;
+    int max_diag = 0;
+    int max_diag2 = 0;
+    int imax_diag = 0;
+
+    for (i = band_b; i <= band_m; i++) {
+        best_score += diag_score[i];
+        best_score2 += diag_score2[i];
+        if (diag_score2[i] > max_diag2) {
+            max_diag2 = diag_score2[i];
+            max_diag = diag_score[i];
+            imax_diag = i;
+        }
+    }
+
+    int from = band_b;
+    int end = band_m;
+    int score = best_score;
+    int score2 = best_score2;
+    for (int k = from, j = band_m + 1; j < band_e; j++, k++) {
+        score -= diag_score[k];
+        score += diag_score[j];
+        score2 -= diag_score2[k];
+        score2 += diag_score2[j];
+        if (score2 > best_score2) {
+            from = k + 1;
+            end = j;
+            best_score = score;
+            best_score2 = score2;
+            if (diag_score2[j] > max_diag2) {
+                max_diag2 = diag_score2[j];
+                max_diag = diag_score[j];
+                imax_diag = j;
+            }
+        }
+    }
+
+    int mlen = imax_diag;
+    if (imax_diag > len1) mlen = nall - imax_diag;
+    int emax = int((1.0 - 0.9) * mlen) + 1;  // 假设 options.cluster_thd = 0.5
+    for (j = from; j < imax_diag; j++) {
+        if ((imax_diag - j) > emax || diag_score[j] < 1) {
+            best_score -= diag_score[j];
+            from++;
+        } else break;
+    }
+    for (j = end; j > imax_diag; j--) {
+        if ((j - imax_diag) > emax || diag_score[j] < 1) {
+            best_score -= diag_score[j];
+            end--;
+        } else break;
+    }
+
+    // 计算最终带宽
+    band_left = from - len1 + 1;
+    band_right = end - len1 + 1;
+    band_center = imax_diag - len1 + 1;
+    best_sum = best_score;
+
+    return 0;
+}
+
 
 int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat, 
 		int &best_score, int &iden_no, int &alnln, float &dist, int *alninfo,
@@ -779,7 +951,7 @@ int main(int argc, char* argv[]){
     ks1 = kseq_init(fp1);
     vector<Sequence> seqs;
     //   cerr<<"11111"<<endl;
-    	while(1)
+    while(1)
 	{
 		int length = kseq_read(ks1);
 		if(length < 0) break;
@@ -812,20 +984,23 @@ int main(int argc, char* argv[]){
     
     WorkingBuffer buffer(max_seq_len);  // 创建工作区
 
-     char* seq1 = seqs[1].seq.data();
+    char* seq1 = seqs[1].seq.data();
     char* seq2 = seqs[0].seq.data();
-   int len1 = seqs[1].len;
-   int len2 = seqs[0].len;
-   double t0 = get_time();
+    int len1 = seqs[1].len;
+    int len2 = seqs[0].len;
+    double t0 = get_time();
+	double t1 = get_time();
     // 计算二元对的倒排表
-    ComputeAAP(seq1, len1, buffer);
-    double t1 = get_time();
-    cerr << "ComputeAAP time : " << t1 - t0 << " seconds" << endl;
+    // ComputeAAP(seq1, len1, buffer);
+    
+    // cerr << "ComputeAAP time : " << t1 - t0 << " seconds" << endl;
     // 计算最佳带宽和匹配结果
     int best_sum, band_left, band_center, band_right,best_score,tiden_no,alnln;
     int talign_info[5];
     float tiden_pc, distance=0;
-    diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
+    // diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
+
+	diag_no_table(seq1,len1,seq2,len2,buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
     int required_aa2 = 31740;
     if ( best_sum < required_aa2 ) exit(0);
     int rc = FAILED_FUNC;
@@ -838,7 +1013,7 @@ int main(int argc, char* argv[]){
 					band_left, band_center, band_right, buffer);
     double t3 = get_time();
     cerr << "local_band_align time : " << t3 - t2 << " seconds" << endl;
-   cout<<"tiden_no  "<<tiden_no<<endl;
+    cout<<"tiden_no  "<<tiden_no<<endl;
     
     return 0;
 }
