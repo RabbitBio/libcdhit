@@ -18,10 +18,12 @@ search_word_table_mt: search_word_table_mt.cpp
 search_word_table_mt_wminhash: search_word_table_mt_wminhash.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
 
+diag_test: diag_test.cpp
+	$(CXX) $(CXXFLAGS) $< -o $@ $(LDFLAGS)
 # OpenMP
 search_word_table_mt_dsu: search_word_table_mt_dsu.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp $< -o $@ $(LDFLAGS)
-all: build_word_table build_word_table_mt search_word_table_mt_dsu search_word_table_mt search_word_table_mt_wminhash
+all: build_word_table build_word_table_mt search_word_table_mt_dsu search_word_table_mt search_word_table_mt_wminhash diag_test
 
 clean:
-	rm -f build_word_table build_word_table_mt search_word_table_mt search_word_table_mt_wminhash search_word_table_mt_dsu
+	rm -f build_word_table build_word_table_mt search_word_table_mt search_word_table_mt_wminhash search_word_table_mt_dsu diag_test
