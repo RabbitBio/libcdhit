@@ -541,6 +541,400 @@ int diag_no_table(
 }
 
 
+// FIXME:
+// An implementation of a simple rotating array calculation.
+// 28/9/2025 mgl
+int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
+		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
+{
+	int i,j,k,j1;
+	int jj,kk;
+	int x,y;
+	int iden_no1;
+	int64_t best_score1;
+	iden_no = 0;
+	if ( (band_right >= len2 ) ||
+			(band_left  <= -len1) ||
+			(band_left  > band_right) ) return FAILED_FUNC;
+	int band_width = band_right - band_left +1;
+	int band_width1 = band_width + 1;
+	MatrixInt64& score_mat = buffer.score_mat;
+	MatrixInt& back_mat = buffer.back_mat;
+
+	int L = band_left,R = band_right;
+	int kmin = (R<0)?-R:(L>0)?L:0;
+	int kmax = (R < len2 - len1)?(R + 2*len1 - 2):(L > len2 - len1)?(2*len2 - L - 2):(len1 + len2 - 2);
+
+	int lenY = kmax - kmin + 1;
+	if(score_mat.size()<=lenY){
+		VectorInt row(band_width1,0);
+		VectorInt64 row2(band_width1,0);
+		while(score_mat.size()<=lenY){
+			score_mat.Append(row2);
+			back_mat.Append(row);
+		}
+	}
+	for(int i=0;i<=lenY;i++){
+		if(score_mat[i].size<band_width1) score_mat[i].Resize(band_width1);
+		if(back_mat[i].size<band_width1) back_mat[i].Resize(band_width1);
+	}
+	best_score = 0;
+	//	For coordinate Mapping,first swicth to the coordinate form of diagonal and anti-diagonal,
+	//		and then offset it for the convenience of memory storage.
+	//	The initial grid coordinates are (i,j), the diagonal coordinates are (x,y), and the subsequent storage coordinates are (n,m)
+	//	Then there is the following coordinate conversion form:
+	//		x = (-i+j), y = (i+j) || i = 1/2*(-x+y), j = 1/2*(x+y)
+	//		n = y-kmin, m = x-L  ||  y = n+kmin, x = m+L
+	if(L<0){
+		int T = (band_right<0)?band_right:0;
+		for(k = L;k<=T;k++){
+			// i=-k , j=0 => x=k ,y=-k => n=y-kmin=-k-kmin , m=x-L=k-L; (k<0,L<0)
+			i = -k-kmin; //n
+			j1 = k-L; //m
+			score_mat[i][j1] = mat.ext_gap*(-k);
+			back_mat[i][j1] = DP_BACK_TOP;
+		}
+		// i=-T, j=0 => x=T, y=-T => n=-T-kmin, m=T-L
+		back_mat[-T-kmin][T-L] = DP_BACK_NONE;
+	}
+
+	if(R>=0){
+		int T = (band_left>0)?band_left:0;
+		for(k=T;k<=R;k++){
+			// i=0, j=k => x=k, y=k => n=y-kmin=k-kmin, m=x-L=k-L (k>0)
+			i = k-kmin; //n
+			j1 = k-L; //m
+			score_mat[i][j1] = mat.ext_gap * k;
+			back_mat[i][j1] = DP_BACK_LEFT;
+		}
+		// i=0,j=T => x=T,y=T => n=T-kmin,m=T-L
+		back_mat[T-kmin][T-L] = DP_BACK_NONE;
+	}
+
+	int gap_open[2] = {mat.gap,mat.ext_gap};
+	int max_diag = band_center - band_left;
+	int extra_score[4] = {4,3,2,1};
+
+	x = (R<0)?R:(L>0)?L:0;
+	y = kmin;
+	i=(y-x)/2, j =(x+y)/2;
+	int ci = iseq1[i];
+	int cj = iseq2[j];
+	int sij = mat.matrix[ci][cj];
+	int extra = extra_score[abs(x-band_center)&3];
+	sij += extra*(sij>0);
+	score_mat[y-kmin][x-L] = max(sij,mat.gap);
+
+
+	for(int y = kmin+1;y<=kmax;y++){
+		for(int x=L+(abs(y+L))%2;x<=R;x+=2){
+			int i=(y-x)/2, j =(x+y)/2;
+			if(i<0 || i>=len1 || j<0 || j>=len2) continue;
+			// if(i==0 || j==0) continue;
+			ci = iseq1[i];
+			cj = iseq2[j];
+			sij = mat.matrix[ci][cj];
+			int s1,k0,back;
+			extra = extra_score[abs(x-band_center)&3];
+			sij += extra*(sij>0);
+
+			back = back_mat[y-kmin][x-L];
+			best_score1 = score_mat[y-kmin][x-L];
+
+			// try (x,y-2)/(i-1,j-1) the top left conerner of the original array
+			if (i>0 && j>0 && y-2>=kmin) {
+				best_score1 = score_mat[y-2-kmin][x-L] + sij;
+				back = DP_BACK_LEFT_TOP;
+			}
+			int gap0 = gap_open[(i==len1-1)|(j==len2-1)];
+			int gap = 0;
+			int64_t score;
+			// try (x-1,y-1)/(i,j-1) the left of original array
+			if(j-1>=0 && x-1>=L && y-1>=kmin){
+				gap = gap0;
+				if(back_mat[y-1-kmin][x-1-L] == DP_BACK_LEFT) gap = mat.ext_gap;
+				if( (score = score_mat[y-1-kmin][x-1-L]+gap) > best_score1 ){
+					back = DP_BACK_LEFT;
+					best_score1 = score;
+				}
+			}
+			// try (x+1,y-1)/(i-1,j) the top of original array
+			if(i-1>=0 && x+1<=R && y-1>=kmin){
+				gap = gap0;
+				if(back_mat[y-1-kmin][x+1-L] == DP_BACK_TOP) gap = mat.ext_gap;
+				if( (score= score_mat[y-1-kmin][x+1-L]+gap) > best_score1){
+					back = DP_BACK_TOP;
+					best_score1 = score;
+				}
+			}
+			score_mat[y-kmin][x-L] = best_score1;
+			back_mat[y-kmin][x-L] = back;
+		}
+	}
+	x = (R<len2-len1)?R:(L>len2-len1)?L:len2-len1;
+	y = kmax;
+	i = (-x+y)/2, j = (x+y)/2;
+	printf("\n(%d,%d)\n",i,j);
+	best_score = score_mat[y-kmin][x-L];
+	best_score1 = score_mat[y-kmin][x-L];
+	printf("%2i(%2i)",best_score1,iden_no1);
+
+#if 1
+	const char *letters = "acgtnx";
+	const char *letters2 = "ACGTNX";
+#else
+	const char *letters = "arndcqeghilkmfpstwyvbzx";
+	const char *letters2 = "ARNDCQEGHILKMFPSTWYVBZX";
+#endif
+	int back = back_mat[y-kmin][x-L];
+	int last = back;
+	int count = 0, count2 = 0, count3 = 0;
+	int match, begin1, begin2, end1, end2;
+	int gbegin1=0, gbegin2=0, gend1=0, gend2=0;
+	int64_t score, smin = best_score1, smax = best_score1 - 1;
+	int posmin, posmax, pos = 0;
+	int bl, dlen = 0, dcount = 0;
+	posmin = posmax = 0;
+	begin1 = begin2 = end1 = end2 = 0;
+
+#ifdef PRINT
+#define PRINT
+	printf( "%i %i\n", best_score, score_mat[i][j1] );
+	printf( "%i %i %i\n", band_left, band_center, band_right );
+	printf( "%i %i %i %i\n", i, j, j1, len2 );
+#endif
+
+#ifdef MAKEALIGN
+#define MAKEALIGN
+	char AA[ MAX_SEQ ], BB[ MAX_SEQ ];
+	int NN = 0;
+	int IA, IB;
+	for(IA=len1;IA>i;IA--){
+		AA[NN] = letters[ iseq1[IA-1] ];
+		BB[NN++] = '-';
+	}
+	for(IB=len2;IB>j;IB--){
+		AA[NN] = '-';
+		BB[NN++] = letters[ iseq2[IB-1] ];
+	}
+#endif
+	
+	int masked = 0;
+	int indels = 0;
+	int max_indels = 0;
+	while(back != DP_BACK_NONE){
+		switch (back){
+		case DP_BACK_TOP:
+		// update from (x+1,y-1)/(i-1,j)
+#ifdef PRINT
+			printf( "%5i: %c %c %9i\n", pos, letters[ iseq1[i] ], '|', score_mat[y-1-kmin][x+1-L] );
+#endif
+#ifdef MAKEALIGN
+			AA[NN] = letters[iseq1[i]];
+			BB[NN++] = '-';
+#endif
+			bl = (last!=back) & (j!=0) & (j!=len2-1);
+			dlen += bl;
+			dcount += bl;
+			score = score_mat[y-kmin][x-L];
+			if(score < smin){
+				count2 = 0;
+				smin = score;
+				posmin = pos - 1;
+				begin1 = i;
+				begin2 = j;
+			}
+			i -= 1;
+			x = x+1;
+			y = y-1;
+			break;
+		case DP_BACK_LEFT:
+		// update from (x-1,y-1)/(i,j-1)
+#ifdef PRINT
+			printf( "%5i: %c %c %9i\n", pos, '|', letters[ iseq2[j] ], score_mat[y-1-kmin][x-1-L] );
+#endif
+#ifdef MAKEALIGN
+			AA[NN] = '-';
+			BB[NN++] = letters[ iseq2[j] ];
+#endif
+			bl = (last!=back) & (i != 0) & (i!=len1-1);
+			dlen += bl;
+			dcount += bl;
+			score = score_mat[y-1-kmin][x-1-L];
+			if(score < smin){
+				count2 = 0;
+				smin = score;
+				posmin = pos - 1;
+				begin1 = i;
+				begin2 = j;
+			}
+			j -= 1;
+			x = x-1;
+			y = y-1;
+			break;
+		case DP_BACK_LEFT_TOP:
+		// update from (x,y-2)/(i-1,j-1)
+#ifdef PRINT
+			if( iseq1[i] == iseq2[j] ){
+				printf( "%5i: %c %c %9i\n", pos, letters2[ iseq1[i] ], letters2[ iseq2[j] ], score_mat[y-2-kmin][x-L] );
+			}else{
+				printf( "%5i: %c %c %9i\n", pos, letters[ iseq1[i] ], letters[ iseq2[j] ], score_mat[y-2-kmin][x-L] );
+			}
+#endif
+#ifdef MAKEALIGN
+			if( iseq1[i] == iseq2[j] ){
+				AA[NN] = letters2[ iseq1[i] ];
+				BB[NN++] = letters2[ iseq2[j] ];
+			}else{
+				AA[NN] = letters[ iseq1[i] ];
+				BB[NN++] = letters[ iseq2[j] ];
+			}
+#endif
+			if (alninfo && true){
+				if(i==0 || j==0){
+					gbegin1 = i;
+					gbegin2 = j;
+				}
+				else if(i==len1-1 || j==len2-1){
+					gend1 = i;
+					gend2 = j;
+				}
+			}
+			score = score_mat[y-2-kmin][x-L];
+			match = iseq1[i] == iseq2[j];
+			if(score > smax){
+				count = 0;
+				smax = score;
+				posmax = pos;
+				end1 = i;
+				end2 = j;
+			}
+			if( false && (iseq1[i] > 4 || iseq2[j] > 4) ){
+				masked += 1;
+			}
+			else{
+				dlen += 1;
+				dcount += !match;
+				count += match;
+				count2 += match;
+				count3 += match;
+			}
+			if(score < smin){
+				int mm = match == 0;
+				count2 = 0;
+				smin =score;
+				posmin = pos - mm;
+				begin1 = i + mm;
+				begin2 = j + mm;
+			}
+			i -= 1;
+			j -= 1;
+			y -= 2;
+			break;
+		default: printf("%i/n", back);break;
+		}
+		pos += 1;
+		last = back;
+		back = back_mat[y-kmin][x-L];
+	}
+	iden_no = true ? count3 : count - count2;
+	alnln = posmin - posmax + 1 - masked;
+	dist = dcount/(float)dlen;
+	//dist = - 0.75 * log( 1.0 - dist * 4.0 / 3.0 );
+	int umtail1 = len1 - 1 - end1;
+	int umtail2 = len2 - 1 - end2;
+	int umhead = begin1 < begin2 ? begin1 : begin2;
+	int umtail = umtail1 < umtail2 ? umtail1 : umtail2;
+	int umlen = umhead + umtail;
+	if( umlen > 99999999 ) return FAILED_FUNC;
+	if( umlen > len1 * 1.0) return FAILED_FUNC;
+	if( umlen > len2 * 1.0 ) return FAILED_FUNC;
+	if( alninfo ){
+		alninfo[0] = begin1;
+		alninfo[1] = end1;
+		alninfo[2] = begin2;
+		alninfo[3] = end2;
+		alninfo[4] = masked;
+		if( true ){
+			alninfo[0] = gbegin1;
+			alninfo[1] = gend1;
+			alninfo[2] = gbegin2;
+			alninfo[3] = gend2;
+		}
+	}
+#ifdef PRINT
+	printf( "%6i %6i:  %4i %4i %4i %4i\n", alnln, iden_no, begin1, end1, begin2, end2 );
+	printf( "%6i %6i:  %4i %4i\n", posmin, posmax, posmin - posmax, count - count2 );
+	printf( "smin = %9i, smax = %9i\n", smin, smax );
+	printf( "dlen = %5i, dcount = %5i, dist = %.3f\n", dlen, dcount, dcount/(float)dlen );
+#endif
+#ifdef MAKEALIGN
+	float identity = iden_no / (float)( options.global_identity ? (len1 - masked) : alnln);
+	if( identity < options.cluster_thd ) return OK_FUNC;
+	while(i>=0){
+		AA[NN] = letters[ iseq1[i] ];
+		BB[NN++] = '-';
+	}
+	while(j>=0){
+		AA[NN] = '-';
+		BB[NN++] = letters[ iseq2[j] ];
+	}
+	AA[NN] = '\0';
+	BB[NN] = '\0';
+
+	for(i=0; i<NN/2; i++){
+		char aa = AA[i], bb = BB[i];
+		AA[i] = AA[NN-i-1];
+		BB[i] = BB[NN-i-1];
+		AA[NN-i-1] = aa;
+		BB[NN-i-1] = bb;
+	}
+	static int fcount = 0; 
+	fcount += 1;
+	FILE *fout = fopen( "alignments.txt", "a" );
+	if( fout == NULL ){
+		if( fcount <= 1 ) printf( "alignment files open failed\n" );
+		return OK_FUNC;
+	}
+	fprintf( fout, "\n\n######################################################\n" );
+	fprintf( fout, "# length X = %i\n", len2 );
+	fprintf( fout, "# length Y = %i\n", len1 );
+	fprintf( fout, "# best align X: %i-%i\n", begin2+1, end2+1 );
+	fprintf( fout, "# best align Y: %i-%i\n", begin1+1, end1+1 );
+	if( alninfo ){
+		fprintf( fout, "# align X: %i-%i\n", alninfo[2]+1, alninfo[3]+1 );
+		fprintf( fout, "# align Y: %i-%i\n", alninfo[0]+1, alninfo[1]+1 );
+	}
+	fprintf( fout, "# alignment length: %i\n", alnln );
+	fprintf( fout, "# identity count: %i\n", iden_no );
+	fprintf( fout, "# identity: %g\n", identity );
+	fprintf( fout, "# distance: %g\n", dist );
+	if( options.is454 ) fprintf( fout, "# max indel: %i\n", max_indels );
+#if 0
+	fprintf( fout, "%i %s\n", seq1->index, AA );
+	fprintf( fout, "%i %s\n", seq2->index, BB );
+#else
+	bool printaa = true;
+	IB = IA = 0;
+	fprintf( fout, "\n\nX " );
+	while( IA < NN ){
+		if( printaa ){
+			fprintf( fout, "%c", BB[IB] );
+			IB += 1;
+			if( IB % 75 ==0 or IB == NN ) printaa = false, fprintf( fout, "\nY " );
+		}else{
+			fprintf( fout, "%c", AA[IA] );
+			IA += 1;
+			if( IA % 75 ==0 ) printaa = true, fprintf( fout, "\n\nX " );
+		}
+	}
+#endif
+	fclose( fout );
+#endif
+	return OK_FUNC;
+}
+
 int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat, 
 		int &best_score, int &iden_no, int &alnln, float &dist, int *alninfo,
 		int band_left, int band_center, int band_right, WorkingBuffer & buffer)
@@ -688,10 +1082,11 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 		i = len1;
 		j = len2;
 	}
+	printf("\n(%d,%d)\n",i,j);
 	j1 = j - i - band_left;
 	best_score = score_mat[i][j1];
 	best_score1 = score_mat[i][j1];
-      printf( "%2i(%2i) ", best_score1, iden_no1 );
+    printf( "%2i(%2i) ", best_score1, iden_no1 );
 #if 1
 	const char *letters = "acgtnx";
 	const char *letters2 = "ACGTNX";
@@ -989,18 +1384,17 @@ int main(int argc, char* argv[]){
     int len1 = seqs[1].len;
     int len2 = seqs[0].len;
     double t0 = get_time();
-	double t1 = get_time();
     // 计算二元对的倒排表
-    // ComputeAAP(seq1, len1, buffer);
-    
-    // cerr << "ComputeAAP time : " << t1 - t0 << " seconds" << endl;
+    ComputeAAP(seq1, len1, buffer);
+    double t1 = get_time();
+    cerr << "ComputeAAP time : " << t1 - t0 << " seconds" << endl;
     // 计算最佳带宽和匹配结果
     int best_sum, band_left, band_center, band_right,best_score,tiden_no,alnln;
     int talign_info[5];
     float tiden_pc, distance=0;
-    // diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
+    diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
 
-	diag_no_table(seq1,len1,seq2,len2,buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
+	// diag_no_table(seq1,len1,seq2,len2,buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
     int required_aa2 = 31740;
     if ( best_sum < required_aa2 ) exit(0);
     int rc = FAILED_FUNC;
@@ -1008,12 +1402,26 @@ int main(int argc, char* argv[]){
     cerr << "diag time : " << t2 - t1 << " seconds" << endl;
     cout << "Best sum: " << best_sum << endl;
     cout << "Band left: " << band_left << ", Band center: " << band_center << ", Band right: " << band_right << endl;
+
+	cout << "\nLocal Band Align"<<endl;
     rc=local_band_align(seq1, seq2, len1, len2, mat,
 					best_score, tiden_no, alnln, distance, talign_info,
 					band_left, band_center, band_right, buffer);
-    double t3 = get_time();
-    cerr << "local_band_align time : " << t3 - t2 << " seconds" << endl;
-    cout<<"tiden_no  "<<tiden_no<<endl;
+	
+	cout << "tiden_no  "<<tiden_no<<endl;
+	cout << "alnln  "	<<alnln<<endl;
+	cout << "distance  "<<distance<<endl;
     
+	cout<<"\nRotation Band Align"<<endl;
+	rc=rotation_band_align(seq1, seq2, len1, len2, mat,
+					best_score, tiden_no, alnln, distance, talign_info,
+					band_left, band_center, band_right, buffer);
+	
+	cout << "tiden_no  "<<tiden_no<<endl;
+	cout << "alnln  "	<<alnln<<endl;
+	cout << "distance  "<<distance<<endl;
+
+	double t3 = get_time();
+    cerr << "\nlocal_band_align time : " << t3 - t2 << " seconds" << endl;
     return 0;
 }
