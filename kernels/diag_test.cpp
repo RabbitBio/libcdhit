@@ -543,7 +543,7 @@ int diag_no_table(
 
 // FIXME:
 // An implementation of a simple rotating array calculation.
-// 28/9/2025 mgl
+// Finished 29/9/2025 mgl
 int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
 		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
 		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
@@ -564,7 +564,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 
 	int L = band_left,R = band_right;
 	int kmin = (R<0)?-R:(L>0)?L:0;
-	int kmax = (R < len2 - len1)?(R + 2*len1 - 2):(L > len2 - len1)?(2*len2 - L - 2):(len1 + len2 - 2);
+	int kmax = (R < len2 - len1)?(R + 2*len1):(L > len2 - len1)?(2*len2 - L):(len1 + len2);
 
 	int lenY = kmax - kmin + 1;
 	if(score_mat.size()<=lenY){
@@ -586,72 +586,63 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 	//	Then there is the following coordinate conversion form:
 	//		x = (-i+j), y = (i+j) || i = 1/2*(-x+y), j = 1/2*(x+y)
 	//		n = y-kmin, m = x-L  ||  y = n+kmin, x = m+L
-	if(L<0){
-		int T = (band_right<0)?band_right:0;
-		for(k = L;k<=T;k++){
-			// i=-k , j=0 => x=k ,y=-k => n=y-kmin=-k-kmin , m=x-L=k-L; (k<0,L<0)
-			i = -k-kmin; //n
-			j1 = k-L; //m
-			score_mat[i][j1] = mat.ext_gap*(-k);
-			back_mat[i][j1] = DP_BACK_TOP;
+	if (L<0) {
+		int T = (R < 0) ? R : 0;           // X = J - I = -I ∈ [L..T]
+		for (int X = L; X <= T; ++X) {
+			int I = -X, J = 0;             // Y = I + J = -X
+			if (I < 0 || I > len1) continue;
+			int n = (I + J) - kmin;        // = -X - Kmin
+			int m = X - L;
+			score_mat[n][m] = (int64_t)mat.ext_gap * I;
+			back_mat[n][m] = DP_BACK_TOP;     // 从上延伸
 		}
-		// i=-T, j=0 => x=T, y=-T => n=-T-kmin, m=T-L
-		back_mat[-T-kmin][T-L] = DP_BACK_NONE;
+		// 回溯终止点
+		back_mat[ ( -T ) - kmin ][ T - L ] = DP_BACK_NONE;
 	}
 
-	if(R>=0){
-		int T = (band_left>0)?band_left:0;
-		for(k=T;k<=R;k++){
-			// i=0, j=k => x=k, y=k => n=y-kmin=k-kmin, m=x-L=k-L (k>0)
-			i = k-kmin; //n
-			j1 = k-L; //m
-			score_mat[i][j1] = mat.ext_gap * k;
-			back_mat[i][j1] = DP_BACK_LEFT;
+	if (R >= 0) {
+		int T = (L > 0) ? L : 0;           // X = J - 0 = J ∈ [T..R]
+		for (int X = T; X <= R; ++X) {
+			int I = 0, J = X;              // Y = X
+			if (J < 0 || J > len2) continue;
+			int n = (I + J) - kmin;        // = X - Kmin
+			int m = X - L;
+			score_mat[n][m] = (int64_t)mat.ext_gap * J;
+			back_mat[n][m] = DP_BACK_LEFT;    // 从左延伸
 		}
-		// i=0,j=T => x=T,y=T => n=T-kmin,m=T-L
-		back_mat[T-kmin][T-L] = DP_BACK_NONE;
+		back_mat[ T - kmin ][ T - L ] = DP_BACK_NONE;
 	}
+
 
 	int gap_open[2] = {mat.gap,mat.ext_gap};
 	int max_diag = band_center - band_left;
 	int extra_score[4] = {4,3,2,1};
 
-	x = (R<0)?R:(L>0)?L:0;
-	y = kmin;
-	i=(y-x)/2, j =(x+y)/2;
-	int ci = iseq1[i];
-	int cj = iseq2[j];
-	int sij = mat.matrix[ci][cj];
-	int extra = extra_score[abs(x-band_center)&3];
-	sij += extra*(sij>0);
-	score_mat[y-kmin][x-L] = max(sij,mat.gap);
-
-
 	for(int y = kmin+1;y<=kmax;y++){
 		for(int x=L+(abs(y+L))%2;x<=R;x+=2){
-			int i=(y-x)/2, j =(x+y)/2;
-			if(i<0 || i>=len1 || j<0 || j>=len2) continue;
-			// if(i==0 || j==0) continue;
-			ci = iseq1[i];
-			cj = iseq2[j];
-			sij = mat.matrix[ci][cj];
+			int i=(y-x)>>1, j =(x+y)>>1;
+			if(i<0 || i>len1 || j<0 || j>len2) continue;
+			if(i==0 || j==0) continue;
+			int ci = iseq1[i-1];
+			int cj = iseq2[j-1];
+			int sij = mat.matrix[ci][cj];
 			int s1,k0,back;
-			extra = extra_score[abs(x-band_center)&3];
+			int extra = extra_score[abs(x-band_center)&3];
 			sij += extra*(sij>0);
 
 			back = back_mat[y-kmin][x-L];
 			best_score1 = score_mat[y-kmin][x-L];
 
 			// try (x,y-2)/(i-1,j-1) the top left conerner of the original array
-			if (i>0 && j>0 && y-2>=kmin) {
+			if (y-2>=kmin) {
 				best_score1 = score_mat[y-2-kmin][x-L] + sij;
 				back = DP_BACK_LEFT_TOP;
 			}
-			int gap0 = gap_open[(i==len1-1)|(j==len2-1)];
+			int gap0 = gap_open[(i==len1)|(j==len2)];
 			int gap = 0;
 			int64_t score;
 			// try (x-1,y-1)/(i,j-1) the left of original array
-			if(j-1>=0 && x-1>=L && y-1>=kmin){
+			if(x-1>=L && y-1>=kmin){
 				gap = gap0;
 				if(back_mat[y-1-kmin][x-1-L] == DP_BACK_LEFT) gap = mat.ext_gap;
 				if( (score = score_mat[y-1-kmin][x-1-L]+gap) > best_score1 ){
@@ -660,7 +651,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 				}
 			}
 			// try (x+1,y-1)/(i-1,j) the top of original array
-			if(i-1>=0 && x+1<=R && y-1>=kmin){
+			if(x+1<=R && y-1>=kmin){
 				gap = gap0;
 				if(back_mat[y-1-kmin][x+1-L] == DP_BACK_TOP) gap = mat.ext_gap;
 				if( (score= score_mat[y-1-kmin][x+1-L]+gap) > best_score1){
@@ -678,7 +669,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 	printf("\n(%d,%d)\n",i,j);
 	best_score = score_mat[y-kmin][x-L];
 	best_score1 = score_mat[y-kmin][x-L];
-	printf("%2i(%2i)",best_score1,iden_no1);
+	printf("%2i(%2i) ",best_score1,iden_no1);
 
 #if 1
 	const char *letters = "acgtnx";
@@ -734,7 +725,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 			AA[NN] = letters[iseq1[i]];
 			BB[NN++] = '-';
 #endif
-			bl = (last!=back) & (j!=0) & (j!=len2-1);
+			bl = (last!=back) & (j!=1) & (j!=len2);
 			dlen += bl;
 			dcount += bl;
 			score = score_mat[y-kmin][x-L];
@@ -758,7 +749,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 			AA[NN] = '-';
 			BB[NN++] = letters[ iseq2[j] ];
 #endif
-			bl = (last!=back) & (i != 0) & (i!=len1-1);
+			bl = (last!=back) & (i != 1) & (i!=len1);
 			dlen += bl;
 			dcount += bl;
 			score = score_mat[y-1-kmin][x-1-L];
@@ -792,16 +783,19 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 			}
 #endif
 			if (alninfo && true){
-				if(i==0 || j==0){
-					gbegin1 = i;
-					gbegin2 = j;
+				if(i==1 || j==1){
+					gbegin1 = i-1;
+					gbegin2 = j-1;
 				}
-				else if(i==len1-1 || j==len2-1){
-					gend1 = i;
-					gend2 = j;
+				else if(i==len1 || j==len2){
+					gend1 = i-1;
+					gend2 = j-1;
 				}
 			}
 			score = score_mat[y-2-kmin][x-L];
+			i-=1;
+			j-=1;
+			y-=2;
 			match = iseq1[i] == iseq2[j];
 			if(score > smax){
 				count = 0;
@@ -828,9 +822,6 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 				begin1 = i + mm;
 				begin2 = j + mm;
 			}
-			i -= 1;
-			j -= 1;
-			y -= 2;
 			break;
 		default: printf("%i/n", back);break;
 		}
