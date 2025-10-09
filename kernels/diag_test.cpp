@@ -1366,7 +1366,7 @@ int main(int argc, char* argv[]){
     // exit(0);
     // const char seq1[] = {1, 2, 1, 2, 1};  // 假设的蛋白质序列1
     // const char seq2[] = {0, 1, 2, 1, 4};  // 假设的蛋白质序列2
-    int band_width = 20, required_aa1 = 33723;
+    int band_width = 20, required_aa1 = 1851;
     
     WorkingBuffer buffer(max_seq_len);  // 创建工作区
 
@@ -1386,8 +1386,8 @@ int main(int argc, char* argv[]){
     diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
 
 	// diag_no_table(seq1,len1,seq2,len2,buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
-    int required_aa2 = 31740;
-    if ( best_sum < required_aa2 ) exit(0);
+    // int required_aa2 = 31740;
+    // if ( best_sum < required_aa2 ) exit(0);
     int rc = FAILED_FUNC;
     double t2 = get_time();
     cerr << "diag time : " << t2 - t1 << " seconds" << endl;
