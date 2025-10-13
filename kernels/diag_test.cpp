@@ -666,10 +666,11 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 	x = (R<len2-len1)?R:(L>len2-len1)?L:len2-len1;
 	y = kmax;
 	i = (-x+y)/2, j = (x+y)/2;
-	printf("\n(%d,%d)\n",i,j);
+	// printf("\n(%d,%d)\n",i,j);
 	best_score = score_mat[y-kmin][x-L];
 	best_score1 = score_mat[y-kmin][x-L];
-	printf("%2i(%2i) ",best_score1,iden_no1);
+	// cout<<best_score<<endl;
+	// printf("%2i(%2i) ",best_score1,iden_no1);
 
 #if 1
 	const char *letters = "acgtnx";
@@ -680,6 +681,9 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 #endif
 	int back = back_mat[y-kmin][x-L];
 	int last = back;
+
+	// printf("\n[DEBUG INFO](%d,%d)\n",back,last);
+
 	int count = 0, count2 = 0, count3 = 0;
 	int match, begin1, begin2, end1, end2;
 	int gbegin1=0, gbegin2=0, gend1=0, gend2=0;
@@ -752,7 +756,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 			bl = (last!=back) & (i != 1) & (i!=len1);
 			dlen += bl;
 			dcount += bl;
-			score = score_mat[y-1-kmin][x-1-L];
+			score = score_mat[y-kmin][x-L];
 			if(score < smin){
 				count2 = 0;
 				smin = score;
@@ -792,7 +796,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 					gend2 = j-1;
 				}
 			}
-			score = score_mat[y-2-kmin][x-L];
+			score = score_mat[y-kmin][x-L];
 			i-=1;
 			j-=1;
 			y-=2;
@@ -831,6 +835,7 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 	}
 	iden_no = true ? count3 : count - count2;
 	alnln = posmin - posmax + 1 - masked;
+	// printf("\n[DEBUG INFO] posmin:%d posmax:%d masked:%d\n",posmin,posmax,masked);
 	dist = dcount/(float)dlen;
 	//dist = - 0.75 * log( 1.0 - dist * 4.0 / 3.0 );
 	int umtail1 = len1 - 1 - end1;
@@ -1077,6 +1082,7 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 	j1 = j - i - band_left;
 	best_score = score_mat[i][j1];
 	best_score1 = score_mat[i][j1];
+	// cout<<best_score<<endl;
     printf( "%2i(%2i) ", best_score1, iden_no1 );
 #if 1
 	const char *letters = "acgtnx";
@@ -1087,6 +1093,9 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 #endif
 	int back = back_mat[i][j1];
 	int last = back;
+
+	// printf("\n[DEBUG INFO](%d,%d)\n",back,last);
+
 	int count = 0, count2 = 0, count3 = 0;
 	int match, begin1, begin2, end1, end2;
 	int gbegin1=0, gbegin2=0, gend1=0, gend2=0;
@@ -1102,6 +1111,7 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 	printf( "%i %i %i\n", band_left, band_center, band_right );
 	printf( "%i %i %i %i\n", i, j, j1, len2 );
 #endif
+
 #ifdef MAKEALIGN
 #define MAKEALIGN
 	char AA[ MAX_SEQ ], BB[ MAX_SEQ ];
@@ -1230,6 +1240,7 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 	}
 	iden_no = true ? count3 : count - count2;
 	alnln = posmin - posmax + 1 - masked;
+	// printf("\n[DEBUG INFO] posmin:%d posmax:%d masked:%d\n",posmin,posmax,masked);
 	dist = dcount/(float)dlen;
 	//dist = - 0.75 * log( 1.0 - dist * 4.0 / 3.0 );
 	int umtail1 = len1 - 1 - end1;
