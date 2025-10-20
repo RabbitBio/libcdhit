@@ -540,10 +540,285 @@ int diag_no_table(
     return 0;
 }
 
+// FIXME:
+// Modified after bug fixes,
+//	completed the tight array implementation of rotation and anti-diagonal alignment
+// Finished 20/10/2025 mgl
+int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
+		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
+{
+	int i,j,k,j1;
+	int jj,kk;
+	int x,y;
+	int iden_no1;
+	int64_t best_score1;
+	iden_no = 0;
+	if ( (band_right >= len2 ) ||
+			(band_left  <= -len1) ||
+			(band_left  > band_right) ) return FAILED_FUNC;
+	int band_width = band_right - band_left +1;
+	int band_width1 = (band_width + 1)/2;
+
+	MatrixInt64& score_mat = buffer.score_mat;
+	MatrixInt& back_mat = buffer.back_mat;
+
+	int L = band_left,R = band_right;
+	int kmin = (R<0)?-R:(L>0)?L:0;
+	int kmax = (R < len2 - len1)?(R + 2*len1):(L > len2 - len1)?(2*len2 - L):(len1 + len2);
+
+	int lenY = kmax - kmin + 1;
+	if(score_mat.size()<=lenY){
+		VectorInt row(band_width1,0);
+		VectorInt64 row2(band_width1,0);
+		while(score_mat.size()<=lenY){
+			score_mat.Append(row2);
+			back_mat.Append(row);
+		}
+	}
+	for(int i=0;i<=lenY;i++){
+		if(score_mat[i].size<band_width1) score_mat[i].Resize(band_width1);
+		if(back_mat[i].size<band_width1) back_mat[i].Resize(band_width1);
+	}
+	best_score = 0;
+	//	For coordinate Mapping,first swicth to the coordinate form of diagonal and anti-diagonal,
+	//		and then offset it for the convenience of memory storage.
+	//	The initial grid coordinates are (i,j), the diagonal coordinates are (x,y), and the subsequent storage coordinates are (n,m)
+	//	Then there is the following coordinate conversion form:
+	//		x = (-i+j), y = (i+j) || i = 1/2*(-x+y), j = 1/2*(x+y)
+	//		n = y-kmin, m = x-L  ||  y = n+kmin, x = m+L
+	if (L<0) {
+		int T = (R < 0) ? R : 0;           // X = J - I = -I ∈ [L..T]
+		for (int X = L; X <= T; ++X) {
+			int I = -X, J = 0;             // Y = I + J = -X
+			if (I < 0 || I > len1) continue;
+			int n = (I + J) - kmin;        // = -X - Kmin
+			int m = (X - L + 1)>>1;
+			score_mat[n][m] = (int64_t)mat.ext_gap * I;
+			back_mat[n][m] = DP_BACK_TOP;     // 从上延伸
+		}
+		// 回溯终止点
+		back_mat[ ( -T ) - kmin ][ (T-L+1)/2 ] = DP_BACK_NONE;
+	}
+
+	if (R >= 0) {
+		int T = (L > 0) ? L : 0;           // X = J - 0 = J ∈ [T..R]
+		for (int X = T; X <= R; ++X) {
+			int I = 0, J = X;              // Y = X
+			if (J < 0 || J > len2) continue;
+			int n = (I + J) - kmin;        // = X - Kmin
+			int m = (X - L + 1)>>1;
+			score_mat[n][m] = (int64_t)mat.ext_gap * J;
+			back_mat[n][m] = DP_BACK_LEFT;    // 从左延伸
+		}
+		back_mat[ T - kmin ][ (T-L+1)/2 ] = DP_BACK_NONE;
+	}
+
+
+	int gap_open[2] = {mat.gap,mat.ext_gap};
+	int max_diag = band_center - band_left;
+	int extra_score[4] = {4,3,2,1};
+
+	double t0 = get_time();
+
+	for(int y = kmin+1;y<=kmax;y++){
+		for(int x=L+(abs(y+L))%2;x<=R;x+=2){
+			// int x = (index<<1)+offset+L;
+			int i=(y-x)>>1, j =(x+y)>>1;
+			if(i<0 || i>len1 || j<0 || j>len2) continue;
+			if(i==0 || j==0) continue;
+			int ci = iseq1[i-1];
+			int cj = iseq2[j-1];
+			int sij = mat.matrix[ci][cj];
+			int s1,k0,back;
+			int extra = extra_score[abs(x-band_center)&3];
+			sij += extra*(sij>0);
+
+			back = back_mat[y-kmin][(x-L+1)>>1];
+			best_score1 = score_mat[y-kmin][(x-L+1)>>1];
+
+			// try (x,y-2)/(i-1,j-1) the top left conerner of the original array
+			if (y-2>=kmin) {
+				best_score1 = score_mat[y-2-kmin][(x-L+1)>>1] + sij;
+				back = DP_BACK_LEFT_TOP;
+			}
+			int gap0 = gap_open[(i==len1)|(j==len2)];
+			int gap = 0;
+			int64_t score;
+			// try (x-1,y-1)/(i,j-1) the left of original array
+			if(x-1>=L && y-1>=kmin){
+				gap = gap0;
+				if(back_mat[y-1-kmin][(x-1-L+1)>>1] == DP_BACK_LEFT) gap = mat.ext_gap;
+				if( (score = score_mat[y-1-kmin][(x-1-L+1)>>1]+gap) > best_score1 ){
+					back = DP_BACK_LEFT;
+					best_score1 = score;
+				}
+			}
+			// try (x+1,y-1)/(i-1,j) the top of original array
+			if(x+1<=R && y-1>=kmin){
+				gap = gap0;
+				if(back_mat[y-1-kmin][(x+1-L+1)>>1] == DP_BACK_TOP) gap = mat.ext_gap;
+				if( (score= score_mat[y-1-kmin][(x+1-L+1)>>1]+gap) > best_score1){
+					back = DP_BACK_TOP;
+					best_score1 = score;
+				}
+			}
+			score_mat[y-kmin][(x-L+1)>>1] = best_score1;
+			back_mat[y-kmin][(x-L+1)>>1] = back;
+		}
+	}
+
+	double t1 = get_time();
+	cout << "Alignment Time: "<<t1-t0<<" seconds" << endl;
+
+	x = (R<len2-len1)?R:(L>len2-len1)?L:len2-len1;
+	y = kmax;
+	i = (-x+y)>>1, j = (x+y)>>1;
+	// printf("\n(%d,%d)\n",i,j);
+	best_score = score_mat[y-kmin][(x-L+1)>>1];
+	best_score1 = score_mat[y-kmin][(x-L+1)>>1];
+	// cout<<best_score<<endl;
+	// printf("%2i(%2i) ",best_score1,iden_no1);
+
+	int back = back_mat[y-kmin][(x-L+1)>>1];
+	int last = back;
+
+	// printf("\n[DEBUG INFO](%d,%d)\n",back,last);
+
+	int count = 0, count2 = 0, count3 = 0;
+	int match, begin1, begin2, end1, end2;
+	int gbegin1=0, gbegin2=0, gend1=0, gend2=0;
+	int64_t score, smin = best_score1, smax = best_score1 - 1;
+	int posmin, posmax, pos = 0;
+	int bl, dlen = 0, dcount = 0;
+	posmin = posmax = 0;
+	begin1 = begin2 = end1 = end2 = 0;
+
+	
+	int masked = 0;
+	int indels = 0;
+	int max_indels = 0;
+	while(back != DP_BACK_NONE){
+		switch (back){
+		case DP_BACK_TOP:
+		// update from (x+1,y-1)/(i-1,j)
+			bl = (last!=back) & (j!=1) & (j!=len2);
+			dlen += bl;
+			dcount += bl;
+			score = score_mat[y-kmin][(x-L+1)>>1];
+			if(score < smin){
+				count2 = 0;
+				smin = score;
+				posmin = pos - 1;
+				begin1 = i;
+				begin2 = j;
+			}
+			i -= 1;
+			x = x+1;
+			y = y-1;
+			break;
+		case DP_BACK_LEFT:
+		// update from (x-1,y-1)/(i,j-1)
+			bl = (last!=back) & (i != 1) & (i!=len1);
+			dlen += bl;
+			dcount += bl;
+			score = score_mat[y-kmin][(x-L+1)>>1];
+			if(score < smin){
+				count2 = 0;
+				smin = score;
+				posmin = pos - 1;
+				begin1 = i;
+				begin2 = j;
+			}
+			j -= 1;
+			x = x-1;
+			y = y-1;
+			break;
+		case DP_BACK_LEFT_TOP:
+		// update from (x,y-2)/(i-1,j-1)
+			if (alninfo && true){
+				if(i==1 || j==1){
+					gbegin1 = i-1;
+					gbegin2 = j-1;
+				}
+				else if(i==len1 || j==len2){
+					gend1 = i-1;
+					gend2 = j-1;
+				}
+			}
+			score = score_mat[y-kmin][(x-L+1)>>1];
+			i-=1;
+			j-=1;
+			y-=2;
+			match = iseq1[i] == iseq2[j];
+			if(score > smax){
+				count = 0;
+				smax = score;
+				posmax = pos;
+				end1 = i;
+				end2 = j;
+			}
+			if( false && (iseq1[i] > 4 || iseq2[j] > 4) ){
+				masked += 1;
+			}
+			else{
+				dlen += 1;
+				dcount += !match;
+				count += match;
+				count2 += match;
+				count3 += match;
+			}
+			if(score < smin){
+				int mm = match == 0;
+				count2 = 0;
+				smin =score;
+				posmin = pos - mm;
+				begin1 = i + mm;
+				begin2 = j + mm;
+			}
+			break;
+		default: printf("%i/n", back);break;
+		}
+		pos += 1;
+		last = back;
+		back = back_mat[y-kmin][(x-L+1)>>1];
+	}
+	double t2 = get_time();
+	cout<<"BackTrace Time: "<<t2-t1<<" seconds"<<endl;
+	iden_no = true ? count3 : count - count2;
+	alnln = posmin - posmax + 1 - masked;
+	// printf("\n[DEBUG INFO] posmin:%d posmax:%d masked:%d\n",posmin,posmax,masked);
+	dist = dcount/(float)dlen;
+	//dist = - 0.75 * log( 1.0 - dist * 4.0 / 3.0 );
+	int umtail1 = len1 - 1 - end1;
+	int umtail2 = len2 - 1 - end2;
+	int umhead = begin1 < begin2 ? begin1 : begin2;
+	int umtail = umtail1 < umtail2 ? umtail1 : umtail2;
+	int umlen = umhead + umtail;
+	if( umlen > 99999999 ) return FAILED_FUNC;
+	if( umlen > len1 * 1.0) return FAILED_FUNC;
+	if( umlen > len2 * 1.0 ) return FAILED_FUNC;
+	if( alninfo ){
+		alninfo[0] = begin1;
+		alninfo[1] = end1;
+		alninfo[2] = begin2;
+		alninfo[3] = end2;
+		alninfo[4] = masked;
+		if( true ){
+			alninfo[0] = gbegin1;
+			alninfo[1] = gend1;
+			alninfo[2] = gbegin2;
+			alninfo[3] = gend2;
+		}
+	}
+	return OK_FUNC;
+}
+
+
 
 // FIXME:
 // An implementation of a simple rotating array calculation.
-// Finished 29/9/2025 mgl
+// Finished 13/10/2025 mgl
 int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
 		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
 		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
@@ -1416,6 +1691,15 @@ int main(int argc, char* argv[]){
     
 	cout<<"\nRotation Band Align"<<endl;
 	rc=rotation_band_align(seq1, seq2, len1, len2, mat,
+					best_score, tiden_no, alnln, distance, talign_info,
+					band_left, band_center, band_right, buffer);
+	
+	cout << "tiden_no  "<<tiden_no<<endl;
+	cout << "alnln  "	<<alnln<<endl;
+	cout << "distance  "<<distance<<endl;
+
+	cout<<"\nCompact Band Align"<<endl;
+	rc=rotation_compact_band_align(seq1, seq2, len1, len2, mat,
 					best_score, tiden_no, alnln, distance, talign_info,
 					band_left, band_center, band_right, buffer);
 	
