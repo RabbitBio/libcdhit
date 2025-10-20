@@ -581,12 +581,6 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 		if(back_mat[i].size<band_width1) back_mat[i].Resize(band_width1);
 	}
 	best_score = 0;
-	//	For coordinate Mapping,first swicth to the coordinate form of diagonal and anti-diagonal,
-	//		and then offset it for the convenience of memory storage.
-	//	The initial grid coordinates are (i,j), the diagonal coordinates are (x,y), and the subsequent storage coordinates are (n,m)
-	//	Then there is the following coordinate conversion form:
-	//		x = (-i+j), y = (i+j) || i = 1/2*(-x+y), j = 1/2*(x+y)
-	//		n = y-kmin, m = x-L  ||  y = n+kmin, x = m+L
 	if (L<0) {
 		int T = (R < 0) ? R : 0;           // X = J - I = -I ∈ [L..T]
 		for (int X = L; X <= T; ++X) {
@@ -595,9 +589,8 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 			int n = (I + J) - kmin;        // = -X - Kmin
 			int m = (X - L + 1)>>1;
 			score_mat[n][m] = (int64_t)mat.ext_gap * I;
-			back_mat[n][m] = DP_BACK_TOP;     // 从上延伸
+			back_mat[n][m] = DP_BACK_TOP;
 		}
-		// 回溯终止点
 		back_mat[ ( -T ) - kmin ][ (T-L+1)/2 ] = DP_BACK_NONE;
 	}
 
