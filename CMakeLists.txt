@@ -22,6 +22,8 @@ if(AVX512)
     add_compile_options(-mavx512f -mavx512bw -mavx512vl)
 endif()
 
+option(ENABLE_VERBOSE "Enable verbose logging macro" OFF)
+
 
 #option(BUILD_SHARED_LIBS "Build shared library" OFF)
 
@@ -30,6 +32,10 @@ file(GLOB_RECURSE SOURCES "${SOURCE_DIR}/*.cpp")
 #add_library(${LIB_NAME} STATIC ${SOURCES})
 add_library(${LIB_NAME} SHARED ${SOURCES})
 target_link_libraries(${LIB_NAME} PUBLIC OpenMP::OpenMP_CXX)  # Add this line to link OpenMP to the library
+
+if(ENABLE_VERBOSE)
+  target_compile_definitions(${LIB_NAME} PUBLIC VERBOSE)
+endif()
 
 if(EXISTS ${INCLUDE_DIR})
     target_include_directories(${LIB_NAME} PUBLIC ${INCLUDE_DIR})

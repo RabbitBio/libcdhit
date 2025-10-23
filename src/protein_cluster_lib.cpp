@@ -212,7 +212,10 @@ void precompute_edges_jaccard(
 	for (auto& s : seqs) max_len = std::max(max_len, strlen(s.data));
 
 	std::atomic<int> progress{0};
+
+#ifdef VERBOSE
 	double tA = get_time();
+#endif
 
 	assert(nthreads >= 1);
 
@@ -253,17 +256,12 @@ void precompute_edges_jaccard(
 				}
 			}
 
-			//int p = ++progress;
-			//if ((p % 1000) == 0) {
-			//	double percent = 100.0 * p / N;
-			//	std::cout << "\rPhase A (precompute): " << p << "/" << N
-			//		<< " (" << percent << "%)" << std::flush;
-			//}
 		}
 	} // 并行区结束
 
-	//std::cout << "\n";
+#ifdef VERBOSE
 	double tB = get_time();
+#endif
 	// ===== 合并阶段（单线程）=====
 	// 合并所有线程的 DSU
 	global_dsu = std::move(thread_dsu[0]);
@@ -275,10 +273,13 @@ void precompute_edges_jaccard(
 		}
 	}
 
+#ifdef VERBOSE
 	double tC = get_time();
-	//std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
-	//std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
-	//std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
+	std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
+	std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
+	std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
+#endif
+
 }
 
 
@@ -290,6 +291,9 @@ void cluster_sequences(
 		double tau,
 		int nthreads
 		) {
+#ifdef VERBOSE
+	double t1 = get_time();
+#endif
 
 	assert(nthreads>=1);
 
@@ -302,13 +306,13 @@ void cluster_sequences(
 		max_seq_len = std::max(max_seq_len, (int)strlen(s.data));
 	}
 
-	// 无预处理映射（data 为 const）
-
 	// 排序序列按长度降序
+	double t_sort_s = get_time();
 	sort(seqs.begin(), seqs.end(),
 			[](const Sequence_new& a, const Sequence_new& b) {
 			return strlen(a.data) > strlen(b.data);
 			});
+	double t_sort_e = get_time();
 
 	// 构建 word_table
 	int table_size = 1;
@@ -320,7 +324,6 @@ void cluster_sequences(
 			nthreads, vector<vector<pair<int,int>>>(table_size)
 			);//TODO: buffering
 
-	double t1 = get_time();
 #pragma omp parallel num_threads(nthreads)
 	{
 		int tid = omp_get_thread_num();
@@ -381,30 +384,37 @@ void cluster_sequences(
 				});
 	}
 
+#ifdef VERBOSE
 	double t2 = get_time();
-	//std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
-
-	// 预计算边缘
+	std::cerr << "Word table build time: " << (t2 - t1) << " seconds" << std::endl;
+	std::cerr << "Sorting time: " << (t_sort_e - t_sort_s) << " seconds" << std::endl;
 	double t3 = get_time();
+#endif
 
 	//DSU dsu(seqs.size());
 	DSU dsu;
 	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads);
 
+#ifdef VERBOSE
 	double t4 = get_time();
-	
-	// 输出到 parent: parent[i] = root of i (root points to itself)
+#endif
+
+	/// 输出到 parent: parent[i] = root of i (root points to itself)
 	/// i = local seq_id
 	/// to global id
 	for (int i = 0; i < N; ++i) {
 		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
 	}
 
+#ifdef VERBOSE
 	double t5 = get_time();
-	//std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
-	//std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
+	std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
+	std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
+	std::cerr << "Total inner foo time: " << (t5 - t1) << " s" << std::endl;
 	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
+#endif
+
 }
 
 void cluster_sequences_st_old(
