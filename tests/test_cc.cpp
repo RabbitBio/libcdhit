@@ -36,6 +36,7 @@ int main(int argc, char* argv[])
 	string res_file = "";
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
+	int threads = 1;
 	double tau = 0.05;   // Jaccard 阈值：按需设置
 	bool mem_reuse = false;
 	bool is_mini = false;
@@ -47,6 +48,8 @@ int main(int argc, char* argv[])
 	auto option_output = app.add_option("-o, --output", res_file, "output files");
 	auto option_m = app.add_flag("-m, --mem_reuse", mem_reuse, "enable memory reuse");
 	auto option_mini = app.add_flag("--mini",is_mini,"use method for small scale");
+
+	auto option_threads = app.add_option("-T, --threads", threads, "number of threads, default 1");
 
 	option_input->required();
 
@@ -68,13 +71,14 @@ int main(int argc, char* argv[])
 	int64_t pos = 0;
 	int64_t number_seqs = 0;
 	int max_seq_len = 0;
-
+	int64_t total_AAs = 0;
 	while(1)
 	{
 		int length = kseq_read(ks1);
 		if(length < 0) break;
 
 		int l = ks1->seq.l;
+		total_AAs += l;
 		max_seq_len = std::max(max_seq_len, l);
 		seqs.push_back(Sequence_new(number_seqs,strdup(ks1->seq.s)));
 
@@ -85,8 +89,10 @@ int main(int argc, char* argv[])
 
 	cerr << "number of sequences: " << seqs.size() << endl;
 	cerr << "max seq length:" << max_seq_len << endl;
+	cerr << "Total AAs total_AAs: " << total_AAs << endl;
 	if(seqs.size() < max_num_seqs) 
 		cerr << "No more seqs than required! Total: "<< seqs.size() << "\tRequired: " << max_num_seqs <<endl;
+	cerr << "threads: " << threads << endl;
 
 
 /// call clustering api
@@ -96,17 +102,24 @@ int main(int argc, char* argv[])
 	/// init buffer
 
 	double t1 = get_time();
-	if(is_mini)
-		cluster_sequences_st_less10(seqs,parent,kmer_size,tau);
-	else{
-		if(mem_reuse){
-			ClusterWS ws;  // 创建一次，后面多次调用都复用
-			cluster_sequences_st_reuse(seqs, parent, kmer_size, tau, ws);
-		}else{
-			cluster_sequences_st(seqs, parent, kmer_size, tau);
+	if(threads == 1)
+	{
+		if(is_mini)
+			cluster_sequences_st_less10(seqs,parent,kmer_size,tau);
+		else{
+			if(mem_reuse){
+				ClusterWS ws;  // 创建一次，后面多次调用都复用
+				//cluster_sequences_st_reuse(seqs, parent, kmer_size, tau, ws);
+				cerr << "reuse version disabled!!!" << endl;
+			}else{
+				cluster_sequences_st(seqs, parent, kmer_size, tau);
+			}
 		}
+	}else
+	{
+		
+		cluster_sequences(seqs, parent, kmer_size, tau, threads);
 	}
-	
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;
