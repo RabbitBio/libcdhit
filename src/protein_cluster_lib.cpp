@@ -866,7 +866,7 @@ static inline int u32_weighted_jaccard_scalar_tail(
 // #define __AVX512F__
 #ifdef __AVX512F__
 
-alignas(64) static const int u32_rot_idx[16][16] = {
+static constexpr uint8_t B_LANE_MAP16[16][16] = {
     // r = 0
     {  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15 },
     // r = 1
@@ -901,64 +901,144 @@ alignas(64) static const int u32_rot_idx[16][16] = {
     {  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,  0 },
 };
 
+// 16 个旋转索引向量（等价于上表，但供 _mm512_permutexvar_epi32 使用）
+static inline __m512i rot_idx_vec(int r) {
+    // 展开写更快：这里简洁起见用加载常量表的方式
+    alignas(64) static const int idx[16][16] = {
+        { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15},
+        {15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14},
+        {14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13},
+        {13,14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12},
+        {12,13,14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11},
+        {11,12,13,14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10},
+        {10,11,12,13,14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+        { 9,10,11,12,13,14,15, 0, 1, 2, 3, 4, 5, 6, 7, 8},
+        { 8, 9,10,11,12,13,14,15, 0, 1, 2, 3, 4, 5, 6, 7},
+        { 7, 8, 9,10,11,12,13,14,15, 0, 1, 2, 3, 4, 5, 6},
+        { 6, 7, 8, 9,10,11,12,13,14,15, 0, 1, 2, 3, 4, 5},
+        { 5, 6, 7, 8, 9,10,11,12,13,14,15, 0, 1, 2, 3, 4},
+        { 4, 5, 6, 7, 8, 9,10,11,12,13,14,15, 0, 1, 2, 3},
+        { 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15, 0, 1, 2},
+        { 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15, 0, 1},
+        { 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15, 0}
+    };
+    return _mm512_load_si512((const __m512i*)idx[r]);
+}
+
+static inline int64_t reduce_add_epi32_masked(__m512i v, __mmask16 m) {
+    __m512i z = _mm512_maskz_mov_epi32(m, v);
+    return (int64_t)_mm512_reduce_add_epi32(z);
+}
+
 void u32_WeightedJaccard_vetcor_AVX512(
     const vector<int>& keysA,const vector<int>& freqA,
     const vector<int>& keysB,const vector<int>& freqB,
     double& jac
 ){
-    const size_t n = keysA.size(),m = keysB.size();
-    if (n == 0 && m == 0) { jac = 0.0; return; }
-    assert(n == freqA.size() && m == freqB.size());
-    int union_val = 0;
-    for(int v : freqA) union_val+=v;
-    for(int v : freqB) union_val+=v;
+    const size_t n = keysA.size(), m = keysB.size();
+    if (n==0 && m==0) { jac = 0.0; return; }
+    if (n != freqA.size() || m != freqB.size()) { jac = 0.0; return; }
+
+    // 并集常量项（64位防溢出）
+    int64_t sumA = 0, sumB = 0;
+    for (int v: freqA) sumA += (int64_t)v;
+    for (int v: freqB) sumB += (int64_t)v;
+
     const int *ka = keysA.data();
     const int *kb = keysB.data();
     const int *fa = freqA.data();
     const int *fb = freqB.data();
-    
+
     size_t ia = 0, ib = 0;
     const size_t st_a = (n/16)*16;
     const size_t st_b = (m/16)*16;
 
-    int inter_val;
-    if(n<16||m<16){
-        inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
-        union_val -= inter_val;
-        jac = (union_val==0)? 0.0 : (double)inter_val/(double)union_val;
+    int64_t inter_val = 0;
+
+    if (n < 16 || m < 16) {
+        // 标量尾
+        inter_val += u32_weighted_jaccard_scalar_tail(ka, fa, n, kb, fb, m);
+        const int64_t uni = (sumA + sumB) - inter_val;
+        jac = (uni==0) ? 0.0 : double(inter_val)/double(uni);
         return;
     }
 
-    alignas(64) int tmp_store[16];
-    while(ia<st_a && ib<st_b){
-        __m512i va_k = _mm512_loadu_si512((const __m512i*)(ka+ia));
-        __m512i va_f = _mm512_loadu_si512((const __m512i*)(fa+ia));
-        __m512i vb_k = _mm512_loadu_si512((const __m512i*)(kb+ib));
-        __m512i vb_f = _mm512_loadu_si512((const __m512i*)(fb+ib));
+    while (ia < st_a && ib < st_b) {
+        const size_t baseA = ia, baseB = ib;
 
-        int a_max = ka[ia+15];
-        int b_max = kb[ib+15];
-        if(a_max<=b_max) ia+=16;
-        if(b_max<=a_max) ib+=16;
+        // auto start = std::chrono::steady_clock::now();;
+        __m512i vA_k = _mm512_loadu_si512((const __m512i*)(ka + baseA));
+        __m512i vB_k = _mm512_loadu_si512((const __m512i*)(kb + baseB));
+        __m512i vA_f = _mm512_loadu_si512((const __m512i*)(fa + baseA));
+        // 注意：我们不旋转 vB_f，只在命中后走标量最小化（与 AVX2 版一致的“按lane回读”策略）
+        // 也可以在命中后按相同 rot 对 vB_f 做一次 permute，然后掩码归约求和（另一种路径）
 
-        for (int r = 0; r < 16; ++r) {
-            const __m512i rot_idx = _mm512_load_si512((const __m512i*)u32_rot_idx[r]);
+        // auto end = std::chrono::steady_clock::now();;
+        // key_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
 
-            __m512i vb_k_rot = _mm512_permutexvar_epi32(rot_idx, vb_k);
-            __mmask16 mcmp   = _mm512_cmpeq_epi32_mask(va_k, vb_k_rot);
-            if (mcmp == 0) continue;
+        int a_max = ka[baseA + 15];
+        int b_max = kb[baseB + 15];
+        if (a_max <= b_max) ia += 16;
+        if (b_max <= a_max) ib += 16;
 
-            __m512i vb_f_rot = _mm512_permutexvar_epi32(rot_idx, vb_f);
-            __m512i vminf    = _mm512_min_epi32(va_f, vb_f_rot);
+        {
+            // start = std::chrono::steady_clock::now();
+            __mmask16 cmp = _mm512_cmpeq_epi32_mask(vA_k, vB_k);
+            // end = std::chrono::steady_clock::now();
+            // key_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
 
-            __m512i vsel = _mm512_maskz_mov_epi32(mcmp, vminf);
-            _mm512_store_si512((__m512i*)tmp_store, vsel);
+            // start = std::chrono::steady_clock::now();
 
-            long long lane_sum = 0;
-            for (int t = 0; t < 16; ++t) lane_sum += tmp_store[t];
-            inter_val += lane_sum;
+            uint32_t mask = (uint32_t)cmp;
+
+            while (mask) {
+#if defined(__BMI__)
+                uint32_t laneA = _tzcnt_u32(mask);
+#else
+                uint32_t laneA = __builtin_ctz(mask);
+#endif
+                mask &= mask - 1;
+                uint32_t laneB = laneA; // r = identity
+                size_t idxA = baseA + laneA;
+                size_t idxB = baseB + laneB;
+                int freA = fa[idxA];
+                int freB = fb[idxB];
+                inter_val += (freA < freB) ? freA : freB;
+            }
+            // end = std::chrono::steady_clock::now();;
+            // fre_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
+
+        }
+
+        for (int r = 1; r <= 15; ++r) {
+            // start = std::chrono::steady_clock::now();;
+            __m512i rk = _mm512_permutexvar_epi32(rot_idx_vec(r), vB_k);
+            __mmask16 cmp = _mm512_cmpeq_epi32_mask(vA_k, rk);
+            // end = std::chrono::steady_clock::now();;
+            // key_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
+            
+            // start = std::chrono::steady_clock::now();;
+            uint32_t mask = (uint32_t)cmp;
+            while (mask) {
+#if defined(__BMI__)
+                uint32_t laneA = _tzcnt_u32(mask);
+#else
+                uint32_t laneA = __builtin_ctz(mask);
+#endif
+                mask &= mask - 1;
+                uint32_t laneB = B_LANE_MAP16[r][laneA];
+                size_t idxA = baseA + laneA;
+                size_t idxB = baseB + laneB;
+                int freA = fa[idxA];
+                int freB = fb[idxB];
+                inter_val += (freA < freB) ? freA : freB;
+            }
+            // end = std::chrono::steady_clock::now();;
+            // fre_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
         }
     }
+
+    // 尾部标量
     if (ia < n && ib < m) {
         inter_val += u32_weighted_jaccard_scalar_tail(
             ka + ia, fa + ia, n - ia,
@@ -966,8 +1046,8 @@ void u32_WeightedJaccard_vetcor_AVX512(
         );
     }
 
-    union_val -= inter_val;
-    jac = (union_val == 0) ? 0.0 : (double)inter_val / (double)union_val;
+    const int64_t union_val = (sumA + sumB) - inter_val;
+    jac = (union_val==0) ? 0.0 : double(inter_val)/double(union_val);
 }
 
 #endif
@@ -986,21 +1066,21 @@ void u32_WeightedJaccard_vetcor_AVX512(
 // 7: swap + left rotate
 static constexpr uint8_t B_LANE_MAP[8][8] = {
     // 0: identity
-    {0,1,2,3,4,5,6,7},
-    // 1: right rot within each 128b half: [3,0,1,2 | 7,4,5,6]
-    {3,0,1,2,7,4,5,6},
-    // 2: between (1,0,3,2 | 5,4,7,6)
-    {1,0,3,2,5,4,7,6},
-    // 3: left rot within each half: [1,2,3,0 | 5,6,7,4]
-    {1,2,3,0,5,6,7,4},
-    // 4: swap halves: [4,5,6,7 | 0,1,2,3]
-    {4,5,6,7,0,1,2,3},
-    // 5: swap + right rot: [7,4,5,6 | 3,0,1,2]
-    {7,4,5,6,3,0,1,2},
-    // 6: swap + between: [5,4,7,6 | 1,0,3,2]
-    {5,4,7,6,1,0,3,2},
-    // 7: swap + left rot: [5,6,7,4 | 1,2,3,0]
-    {5,6,7,4,1,2,3,0},
+    {0,1,2,3, 4,5,6,7},
+    // 1: right rot within each 128b half
+    {3,0,1,2, 7,4,5,6},
+    // 2: between
+    {2,3,0,1, 6,7,4,5},
+    // 3: left rot within each half
+    {1,2,3,0, 5,6,7,4},
+    // 4: swap halves
+    {4,5,6,7, 0,1,2,3},
+    // 5: swap + right rot
+    {7,4,5,6, 3,0,1,2},
+    // 6: swap + between
+    {6,7,4,5, 2,3,0,1},
+    // 7: swap + left rot
+    {5,6,7,4, 1,2,3,0},
 };
 
 void u32_WeightedJaccard_vector_AVX2(
@@ -1029,7 +1109,7 @@ void u32_WeightedJaccard_vector_AVX2(
     const size_t st_b = (m/8)*8;
     
     int inter_val = 0;
-    if(n<8||m<8){   
+    if(n<8 || m<8){   
         inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
         union_val -= inter_val;
         jac = (union_val == 0)? 0.0 : (double)inter_val/(double) union_val;
@@ -1037,16 +1117,23 @@ void u32_WeightedJaccard_vector_AVX2(
         return;
     }
     
-    const int32_t sh_right = _MM_SHUFFLE(0,3,2,1);
-    const int32_t sh_left  = _MM_SHUFFLE(2,1,0,3);
+    // const int32_t sh_right = _MM_SHUFFLE(0,3,2,1);
+    // const int32_t sh_left  = _MM_SHUFFLE(2,1,0,3);
+    const int32_t sh_left = _MM_SHUFFLE(0,3,2,1);
+    const int32_t sh_right  = _MM_SHUFFLE(2,1,0,3);
     const int32_t sh_between = _MM_SHUFFLE(1,0,3,2);
 
     while(ia<st_a && ib<st_b){
-        __m256i v_a = _mm256_loadu_si256((const __m256i*)(ka + ia));
-        __m256i v_b = _mm256_loadu_si256((const __m256i*)(kb + ib));
+        size_t baseA = ia;
+        size_t baseB = ib;
 
-        int a_max = ka[ia+7];
-        int b_max = kb[ib+7];
+        // auto start = std::chrono::steady_clock::now();
+
+        __m256i v_a = _mm256_loadu_si256((const __m256i*)(ka + baseA));
+        __m256i v_b = _mm256_loadu_si256((const __m256i*)(kb + baseB));
+
+        int a_max = ka[baseA+7];
+        int b_max = kb[baseB+7];
         if(a_max<=b_max) ia+=8;
         if(b_max<=a_max) ib+=8;
 
@@ -1077,8 +1164,12 @@ void u32_WeightedJaccard_vector_AVX2(
         __m256 vb_sw_l1 = _mm256_permute_ps(vb_sw,sh_left);
         __m256i cmp7 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_l1);
 
+        // auto end = std::chrono::steady_clock::now();
+        // key_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
+
         const __m256i cmps[8] = {cmp0,cmp1,cmp2,cmp3,cmp4,cmp5,cmp6,cmp7};
 
+        // start = std::chrono::steady_clock::now();
         for(int p=0;p<8;p++){
             uint32_t mask = (uint32_t)_mm256_movemask_ps((__m256)cmps[p]);
             while(mask){
@@ -1089,19 +1180,19 @@ void u32_WeightedJaccard_vector_AVX2(
 #endif
                 mask &= mask - 1;
                 uint32_t laneB = B_LANE_MAP[p][laneA];
-                size_t idxA = (ia-8) + laneA;
-                size_t idxB = (ib-8) + laneB;
+                size_t idxA = baseA + laneA;
+                size_t idxB = baseB + laneB;
                 int freA = fa[idxA];
                 int freB = fb[idxB];
-                inter_val += (freA<freB)? freA:freB;
+                inter_val += std::min(freA,freB);
             }
         }
+        // end = std::chrono::steady_clock::now();
+        // fre_time += std::chrono::duration_cast<std::chrono::nanoseconds>(end-start).count();
     }
     if(ia<n && ib<m){
         inter_val += u32_weighted_jaccard_scalar_tail(ka+ia,fa+ia,n-ia,kb+ib,fb+ib,m-ib);
-
     }
-
     union_val -= inter_val;
     jac = (union_val==0) ? 0.0 : (double)inter_val/(double)union_val;
 	// cout<<jac<<endl;
@@ -1303,303 +1394,5 @@ void cluster_sequences_st_less10(
     for (int i = 0; i < N; ++i) {
         parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
     }
-    // cerr<<"Sorting total time: "<<sort_time<<" s\n";
-}
-
-void std_sort_cArray(int* word_encodes,const int len){
-    // double t1 = get_time();
-    sort(word_encodes,word_encodes+len);
-    // double t2 = get_time();
-    // sort_time+=t2-t1;
-    // cerr << "Sorting time: " << t2 - t1 << " s" << endl;
-}
-
-void LSD_sort_8bit_cArray(int* word_encodes,const int n){
-    // double t1 = get_time();
-    // const size_t n = word_encodes.size();
-    if(n<=1){
-        return;
-    }
-
-    int* buff = new int[n];
-    // 辅助数组
-    int cnt[256];
-    int start[256];
-    int next_pos[256];
-
-    auto pass = [&](int shift, int* src, int* dst) {
-        // 计数
-        memset(cnt, 0, sizeof(cnt));
-        for (int i = 0; i < n; i++) {
-            uint32_t v = (uint32_t)src[i];
-            uint32_t d = (v >> shift) & 0xFFu;
-            ++cnt[d];
-        }
-        // 前缀和：桶起始位置
-        int run = 0;
-        for (int d = 0; d < 256; d++) {
-            start[d] = run;
-            run += cnt[d];
-        }
-        // 稳定分配
-        memcpy(next_pos, start, sizeof(start));
-        for (int i = 0; i < n; i++) {
-            uint32_t v = (uint32_t)src[i];
-            uint32_t d = (v >> shift) & 0xFFu;
-            dst[next_pos[d]++] = v;
-        }
-    };
-
-    pass(0, word_encodes, buff);
-    pass(8, buff, word_encodes);
-    pass(16, word_encodes, buff);
-
-    // 拷回结果
-    for (int i = 0; i < n; i++) {
-        word_encodes[i] = buff[i];
-    }
-    delete[] buff;
-}
-
-void MergeKmerFreq_cArray(int* word_encodes,int* word_encodes_no,int& len){
-    int kmer = -1;
-    int w = -1;
-    for(int i=0;i<len;i++){
-        if(word_encodes[i]!=kmer){
-            kmer=word_encodes[i];
-            w++;
-            word_encodes[w]=kmer;
-        }
-        word_encodes_no[w]++;
-    }
-    len = w+1;
-}
-
-void EncodeWordsSoA_cArray(
-    const Sequence_new &seq,
-    int* word_encodes,
-    int* word_encodes_no,
-    int& len,
-    int NAA
-){
-    const char* seqi = seq.data;
-    len = strlen(seqi) - NAA + 1;
-    int j;
-    unsigned char k, k1;
-    for (j = 0; j < len; j++) {
-        const char* word = seqi + j;
-        int encode = 0;
-        for (k = 0, k1 = NAA - 1; k < NAA; k++, k1--) {
-            encode += aa_map[(unsigned char)word[k]] * NAAN_array[k1];
-        }
-        word_encodes[j] = encode;
-    }
-    // cout<<"<"<<len<<", "<<endl;
-    // std_sort_cArray(word_encodes,len);
-    LSD_sort_8bit_cArray(word_encodes,len);
-    // for(int i=0;i<10;i++){
-    //     cout<<"<"<<word_encodes[i]<<"> ";
-    // }
-    // cout<<"\n";
-    MergeKmerFreq_cArray(word_encodes,word_encodes_no,len);
-    // cout<<len<<"> "<<endl;
-}
-
-void CountWeightedJaccard_SoA_cArray(
-    const int* seqi,const int* counti,const int len_i,
-    const int* seqj,const int* countj,const int len_j,
-    double& jac
-){
-    size_t idx_i = 0,idx_j = 0;
-    long long inter_val = 0,union_val = 0;
-    while(idx_i<len_i && idx_j<len_j){
-        if(seqi[idx_i]==seqj[idx_j]){
-            const int a = counti[idx_i];
-            const int b = countj[idx_j];
-            inter_val+=std::min(a,b);
-            union_val+=a+b;
-            idx_i++,idx_j++;
-        }
-        else if(seqi[idx_i]<seqj[idx_j]){
-            union_val+=counti[idx_i];
-            idx_i++;
-        }
-        else{
-            union_val+=countj[idx_j];
-            idx_j++;
-        }
-    }
-    while(idx_i<len_i) union_val+=counti[idx_i++];
-    while(idx_j<len_j) union_val+=countj[idx_j++];
-    union_val -= inter_val;
-    // cout<<" "<<inter_val<<" , "<< union_val<<"\t";
-    jac = (union_val!=0)? static_cast<double>(inter_val) / static_cast<double>(union_val) : 0.0;
-}
-
-#ifdef __AVX2__
-
-void u32_WeightedJaccard_vector_AVX2_cArray(
-    const int* ka,const int* fa,const int n,
-    const int* kb,const int* fb,const int m,
-    double& jac
-){
-	// cout<<"use avx2"<<endl;
-    if(n == 0&& m==0){
-        jac = 0.0;
-		// cout<<jac<<endl;
-        return;
-    }
-
-    int union_val = 0;
-    // for(auto v: freqA) union_val+=v;
-    // for(auto v: freqB) union_val+=v;
-    for(int i=0;i<n;i++) union_val += fa[i];
-    for(int i=0;i<m;i++) union_val+=fb[i];
-
-    size_t ia = 0, ib = 0;
-    const size_t st_a = (n/8)*8;
-    const size_t st_b = (m/8)*8;
-    
-    int inter_val = 0;
-    if(n<8||m<8){   
-        inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
-        union_val -= inter_val;
-        jac = (union_val == 0)? 0.0 : (double)inter_val/(double) union_val;
-		// cout<<jac<<endl;
-        return;
-    }
-    
-    const int32_t sh_right = _MM_SHUFFLE(0,3,2,1);
-    const int32_t sh_left  = _MM_SHUFFLE(2,1,0,3);
-    const int32_t sh_between = _MM_SHUFFLE(1,0,3,2);
-
-    while(ia<st_a && ib<st_b){
-        __m256i v_a = _mm256_loadu_si256((const __m256i*)(ka + ia));
-        __m256i v_b = _mm256_loadu_si256((const __m256i*)(kb + ib));
-
-        int a_max = ka[ia+7];
-        int b_max = kb[ib+7];
-        if(a_max<=b_max) ia+=8;
-        if(b_max<=a_max) ib+=8;
-
-        __m256 vb_ps = (__m256) v_b;
-        __m256 vb_r1 = _mm256_permute_ps(vb_ps,sh_right);
-        __m256 vb_bt = _mm256_permute_ps(vb_ps,sh_between);
-        __m256 vb_l1 = _mm256_permute_ps(vb_ps,sh_left);
-
-        // 128bit 半宽
-
-        __m256 vb_sw = _mm256_permute2f128_ps(vb_ps,vb_ps,1);
-        __m256 vb_sw_r1 = _mm256_permute_ps(vb_sw,sh_right);
-        __m256 vb_sw_bt = _mm256_permute_ps(vb_sw,sh_between);
-        __m256 vb_sw_l1 = _mm256_permute_ps(vb_sw,sh_left);
-
-        __m256i cmp0 = _mm256_cmpeq_epi32(v_a,v_b);
-        __m256i cmp1 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_r1);
-        __m256i cmp2 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_bt);
-        __m256i cmp3 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_l1);
-        __m256i cmp4 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw);
-        __m256i cmp5 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_r1);
-        __m256i cmp6 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_bt);
-        __m256i cmp7 = _mm256_cmpeq_epi32(v_a,(__m256i)vb_sw_l1);
-
-        const __m256i cmps[8] = {cmp0,cmp1,cmp2,cmp3,cmp4,cmp5,cmp6,cmp7};
-
-        for(int p=0;p<8;p++){
-            uint32_t mask = (uint32_t)_mm256_movemask_ps((__m256)cmps[p]);
-            while(mask){
-#if defined(__BMI__)
-                uint32_t laneA = (uint32_t)_tzcnt_u32(mask);
-#else
-                uint32_t laneA = (uint32_t)__builtin_ctz(mask);
-#endif
-                mask &= mask - 1;
-                uint32_t laneB = B_LANE_MAP[p][laneA];
-                size_t idxA = (ia-8) + laneA;
-                size_t idxB = (ib-8) + laneB;
-                int freA = fa[idxA];
-                int freB = fa[idxB];
-                inter_val += (freA<freB)? freA:freB;
-            }
-        }
-    }
-    if(ia<n && ib<m){
-        inter_val += u32_weighted_jaccard_scalar_tail(ka+ia,fa+ia,n-ia,kb+ib,fb+ib,m-ib);
-
-    }
-
-    union_val -= inter_val;
-    jac = (union_val==0) ? 0.0 : (double)inter_val/(double)union_val;
-	// cout<<jac<<endl;
-}
-#endif
-
-void cluster_sequence_singleThread_smallScale_cArray(
-    std::vector<Sequence_new>& seqs,
-    std::vector<int>& parent,
-    int kmer_size,
-    double tau
-){
-    InitNAA(MAX_UAA);
-    init_aa_map();
-    int N=(int)seqs.size();
-
-    int max_seq_len = 0;
-    sort(seqs.begin(), seqs.end(),
-        [](const Sequence_new& a, const Sequence_new& b) {
-        return strlen(a.data) > strlen(b.data);
-        });
-    max_seq_len = strlen(seqs[0].data);
-
-    int** word_encodes = new int*[N];
-    int** word_encodes_no = new int*[N];
-    int* buff = new int[max_seq_len];
-    int* lens = new int[N];
-    
-    for (int seq_id = 0; seq_id < N; ++seq_id) {
-        // word_encodes_no[seq_id].resize(max_seq_len);
-        word_encodes[seq_id] = new int[max_seq_len];
-        word_encodes_no[seq_id] = new int[max_seq_len];
-        auto& s = seqs[seq_id];
-        int len = strlen(s.data);
-        if (len < kmer_size) continue;
-        // EncodeWordsPair(s,word_encodes[seq_id],kmer_size);
-        EncodeWordsSoA_cArray(s,word_encodes[seq_id],word_encodes_no[seq_id],lens[seq_id],kmer_size);
-    }
-
-    DSU dsu(N);
-    double jac = 0.0;
-    for(int seq_i=0;seq_i<N;seq_i++){
-        for(int seq_j=seq_i+1;seq_j<N;seq_j++){
-            if(dsu.find(seq_i)==dsu.find(seq_j)) continue;
-			// cout<<"<"<<seq_i<<","<<seq_j<<">\t";
-#ifdef __AVX2__
-			u32_WeightedJaccard_vector_AVX2_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
-                word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
-#else
-        	CountWeightedJaccard_SoA_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
-                word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
-#endif
-            // CountWeightedJaccard_SoA_cArray(word_encodes[seq_i],word_encodes_no[seq_i],lens[seq_i],
-                // word_encodes[seq_j],word_encodes_no[seq_j],lens[seq_j],jac);
-            // cout<<jac<<endl;
-            if(jac>=tau){
-                dsu.unite(seq_i,seq_j);
-            }
-        }
-    }
-    
-    for (int i = 0; i < N; ++i) {
-        parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
-    }
-
-    // free memory
-    for(int i=0;i<N;i++){
-        delete[] word_encodes[i];
-        delete[] word_encodes_no[i];
-    }
-    delete[] word_encodes;
-    delete[] word_encodes_no;
-    delete[] buff;
     // cerr<<"Sorting total time: "<<sort_time<<" s\n";
 }
