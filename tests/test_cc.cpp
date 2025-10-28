@@ -37,12 +37,14 @@ int main(int argc, char* argv[])
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
 	double tau = 0.05;   // Jaccard 阈值：按需设置
+	bool test = false;
 
 	auto option_input = app.add_option("-i, --input", filename, "input file name, fasta or gziped fasta formats");
 	auto option_max_n = app.add_option("-n, --max_num_seqs", max_num_seqs, "max number of seqs for building word table");
 	auto option_k = app.add_option("-k, --kmer_size", kmer_size, "set kmer size, default 5.");
 	auto option_tau = app.add_option("-t, --jaccard_thres", tau, "set weighted jaccard threshold, default 0.36.");
 	auto option_output = app.add_option("-o, --output", res_file, "output files");
+	auto option_test = app.add_flag("--test",test,"enable test order");
 
 	option_input->required();
 
@@ -57,7 +59,9 @@ int main(int argc, char* argv[])
 		return 0;
 	}
 
-#ifdef __AVX2__
+#if defined(__AVX512F__)
+	cout<<"[Use AVX512F]\n";
+#elif defined(__AVX2__)
 	cout<<"[Use AVX2]\n";
 #else
 	cout<<"[Use Naive]\n";
@@ -95,10 +99,21 @@ int main(int argc, char* argv[])
 	std::vector<int> parent;
 	parent.resize(seqs.size());
 
-	double t1 = get_time();
-	cluster_sequences_st_less10(seqs, parent, kmer_size, tau);
-	// cluster_sequence_singleThread_smallScale_cArray(seqs, parent, kmer_size, tau);
-	double t2 = get_time();
+	double t1,t2;
+	if(test){
+		t1 = get_time();
+		for(int i=1;i<=100000;i++)
+			cluster_sequences_st_less10(seqs, parent, kmer_size, tau);
+		t2 = get_time();
+	}
+	
+	else{
+		t1 = get_time();
+		cluster_sequences_st_less10(seqs, parent, kmer_size, tau);
+		// cluster_sequence_singleThread_smallScale_cArray(seqs, parent, kmer_size, tau);
+		t2 = get_time();
+	}
+	
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;
 	//for (size_t i = 0; i < parent.size(); ++i) {

@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
 project(libcdhit LANGUAGES CXX)
+# ===== 总是生成调试信息 =====
+if (MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  # MSVC / clang-cl
+  add_compile_options(/Zi)   # 编译阶段产生 PDB
+  add_link_options(/DEBUG)   # 链接阶段生成/保留 PDB
+else()
+  # GCC/Clang
+  add_compile_options(-g)    # 所有配置：Debug/Release/RelWithDebInfo 都带 -g
+endif()
+
 
 # ===== OpenMP =====
 find_package(OpenMP REQUIRED)
@@ -48,8 +58,8 @@ if (ENABLE_SIMD)
     target_compile_options(${LIB_NAME} PRIVATE /arch:AVX2)
     target_compile_definitions(${LIB_NAME} PRIVATE HAVE_AVX2=1)
   else()
-    set(_simd_flags -mavx2 -mpopcnt -mbmi)
-    # set(_simd_flags -mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mpopcnt -mbmi)
+    # set(_simd_flags -mavx2 -mpopcnt -mbmi)
+    set(_simd_flags -mavx512f -mavx512bw -mavx512vl -mavx512dq -mavx512cd -mpopcnt -mbmi)
     foreach(f IN LISTS _simd_flags)
       string(REPLACE "-" "_" fvar ${f})
       check_cxx_compiler_flag(${f} HAVE_${fvar})
@@ -95,8 +105,8 @@ if (MSVC)
     target_compile_definitions(test_cc    PRIVATE HAVE_AVX2=1)
   endif()
 else()
-  target_compile_options(test_cdhit PRIVATE -O3 -Wall -Wextra)
-  target_compile_options(test_cc    PRIVATE -O3 -Wall -Wextra)
+  target_compile_options(test_cdhit PRIVATE -O3 -Wall -Wextra -g)
+  target_compile_options(test_cc    PRIVATE -O3 -Wall -Wextra -g)
   if (ENABLE_SIMD)
     foreach(f IN LISTS _simd_flags)
       string(REPLACE "-" "_" fvar ${f})
@@ -120,6 +130,15 @@ if (ENABLE_LTO AND _ipo_ok)
   set_property(TARGET test_cdhit PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
   set_property(TARGET test_cc    PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
+
+# # 总是保留帧指针，栈回溯更稳
+# if(NOT MSVC)
+#   add_compile_options(-fno-omit-frame-pointer)
+# endif()
+
+# # 做性能分析时先关掉 LTO，避免调试映射缺失
+# option(ENABLE_LTO "Enable LTO" OFF)
+
 
 # ===== 安装 =====
 install(TARGETS ${LIB_NAME} DESTINATION lib)
