@@ -16,10 +16,30 @@
 #include "robin_hood.h"
 #include <unordered_set>  
 #include <cassert>
+#include <array>
 
 #include <immintrin.h>
 
 using namespace std;
+
+constexpr int aa_value(char c) {
+    switch (c) {
+        case 'A': return 0;  case 'C': return 1;  case 'D': return 2;  case 'E': return 3;
+        case 'F': return 4;  case 'G': return 5;  case 'H': return 6;  case 'I': return 7;
+        case 'K': return 8;  case 'L': return 9;  case 'M': return 10; case 'N': return 11;
+        case 'P': return 12; case 'Q': return 13; case 'R': return 14; case 'S': return 15;
+        case 'T': return 16; case 'V': return 17; case 'W': return 18; case 'Y': return 19;
+        case 'X': return 20;
+        default:  return 0;
+    }
+}
+
+constexpr std::array<int,256> aa_map = []{
+    std::array<int,256> a{};                 // 全部置 0
+    for (int i = 0; i < 256; ++i)
+        a[static_cast<unsigned char>(i)] = aa_value(static_cast<char>(i));
+    return a;
+}();
 
 // 时间函数
 double get_time() {
@@ -43,16 +63,16 @@ struct DSU {
 	}
 };
 
-int aa_map[256];
-
-void init_aa_map() {
-	fill(begin(aa_map), end(aa_map), 0);
-	aa_map['A'] = 0; aa_map['C'] = 1; aa_map['D'] = 2; aa_map['E'] = 3; aa_map['F'] = 4;
-	aa_map['G'] = 5; aa_map['H'] = 6; aa_map['I'] = 7; aa_map['K'] = 8; aa_map['L'] = 9;
-	aa_map['M'] = 10; aa_map['N'] = 11; aa_map['P'] = 12; aa_map['Q'] = 13; aa_map['R'] = 14;
-	aa_map['S'] = 15; aa_map['T'] = 16; aa_map['V'] = 17; aa_map['W'] = 18; aa_map['Y'] = 19;
-	aa_map['X'] = 20;
-}
+//int aa_map[256];
+//
+//void init_aa_map() {
+//	fill(begin(aa_map), end(aa_map), 0);
+//	aa_map['A'] = 0; aa_map['C'] = 1; aa_map['D'] = 2; aa_map['E'] = 3; aa_map['F'] = 4;
+//	aa_map['G'] = 5; aa_map['H'] = 6; aa_map['I'] = 7; aa_map['K'] = 8; aa_map['L'] = 9;
+//	aa_map['M'] = 10; aa_map['N'] = 11; aa_map['P'] = 12; aa_map['Q'] = 13; aa_map['R'] = 14;
+//	aa_map['S'] = 15; aa_map['T'] = 16; aa_map['V'] = 17; aa_map['W'] = 18; aa_map['Y'] = 19;
+//	aa_map['X'] = 20;
+//}
 
 // EncodeWords 函数（修改为使用 aa_map 计算编码，无需预映射）
 int EncodeWords(const Sequence_new &seq, vector<int> &word_encodes, vector<int> &word_encodes_no, int NAA) {
@@ -294,7 +314,7 @@ void cluster_sequences(
 	assert(nthreads>=1);
 
 	InitNAA(MAX_UAA);
-	init_aa_map();
+	//init_aa_map();
 
 	int N = (int)seqs.size();
 	int max_seq_len = 0;
@@ -415,7 +435,7 @@ void cluster_sequences_st_old(
 		) {
 
 	InitNAA(MAX_UAA); //TODO:move out
-	init_aa_map(); //TODO:move out
+	//init_aa_map(); //TODO:move out
 
 	int N = (int)seqs.size();
 	int max_seq_len = 0;
@@ -507,7 +527,7 @@ void cluster_sequences_st(
 		double tau)
 {
 	InitNAA(MAX_UAA); // TODO: 可外移
-	init_aa_map();    // TODO: 可外移
+	//init_aa_map();    // TODO: 可外移
 
 	const int N = (int)seqs.size();
 	int max_seq_len = 0;
@@ -606,7 +626,7 @@ void cluster_sequences_st_reuse(
 		ClusterWS& ws)   // ← 复用工作区
 {
 	InitNAA(MAX_UAA); // TODO: 可外移到更高层，仅需一次
-	init_aa_map();    // TODO: 可外移到更高层，仅需一次
+	//init_aa_map();    // TODO: 可外移到更高层，仅需一次
 
 	const int N = (int)seqs.size();
 	int max_seq_len = 0;
@@ -1329,7 +1349,7 @@ void cluster_sequences_st_less10(
         double tau
 ){
     InitNAA(MAX_UAA);
-    init_aa_map();
+    //init_aa_map();
     int N=(int)seqs.size();
 
     int max_seq_len = 0;
