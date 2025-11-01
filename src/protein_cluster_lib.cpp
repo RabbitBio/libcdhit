@@ -731,7 +731,7 @@ void cluster_sequences_st_reuse(
 	}
 
 	// 写回代表元（保持与原始 seq_id 的对应）
-	parent.resize(N);
+	//parent.resize(N);
 	for (int i = 0; i < N; ++i) {
 		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
 	}
