@@ -96,8 +96,8 @@ int main(int argc, char* argv[])
 
 
 /// call clustering api
-	std::vector<int> parent;
-	parent.resize(seqs.size());
+//	std::vector<int> parent;
+//	parent.resize(seqs.size());
 
 	/// init buffer
 
@@ -105,20 +105,20 @@ int main(int argc, char* argv[])
 	if(threads == 1)
 	{
 		if(is_mini)
-			cluster_sequences_st_less10(seqs,parent,kmer_size,tau);
+			cluster_sequences_st_less10(seqs,kmer_size,tau);
 		else{
 			if(mem_reuse){
 				ClusterWS ws;  // 创建一次，后面多次调用都复用
-				//cluster_sequences_st_reuse(seqs, parent, kmer_size, tau, ws);
+				//cluster_sequences_st_reuse(seqs, kmer_size, tau, ws);
 				cerr << "reuse version disabled!!!" << endl;
 			}else{
-				cluster_sequences_st(seqs, parent, kmer_size, tau);
+				cluster_sequences_st(seqs, kmer_size, tau);
 			}
 		}
 	}else
 	{
 		
-		cluster_sequences(seqs, parent, kmer_size, tau, threads);
+		cluster_sequences(seqs, kmer_size, tau, threads);
 	}
 	double t2 = get_time();
 	// 打印结果
@@ -128,8 +128,8 @@ int main(int argc, char* argv[])
 	//}
 
     unordered_set<int> roots;
-	roots.reserve(parent.size() * 2);
-	for (const auto& pr : parent) roots.insert(pr);
+	roots.reserve(seqs.size() * 2);
+	for (const auto& pr : seqs) roots.insert(pr.new_root_id);
 	cerr << "Number of clusters: " << roots.size() << endl;
 	cerr << "Clustering time: " << t2 - t1 << " s" << endl;
 	cerr << "Avg seq per second: " << (double)number_seqs / (t2 - t1) << endl;

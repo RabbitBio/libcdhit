@@ -305,7 +305,6 @@ void precompute_edges_jaccard(
 // 主函数实现
 void cluster_sequences(
 		std::vector<Sequence_new>& seqs,
-		std::vector<int>& parent,
 		int kmer_size,
 		double tau,
 		int nthreads
@@ -417,7 +416,7 @@ void cluster_sequences(
 	/// i = local seq_id
 	/// to global id
 	for (int i = 0; i < N; ++i) {
-		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 
 	double t5 = get_time();
@@ -429,7 +428,6 @@ void cluster_sequences(
 
 void cluster_sequences_st_old(
 		std::vector<Sequence_new>& seqs,
-		std::vector<int>& parent,
 		int kmer_size,
 		double tau
 		) {
@@ -516,13 +514,12 @@ void cluster_sequences_st_old(
 	}
 
 	for (int i = 0; i < N; ++i) {
-		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 
 }
 void cluster_sequences_st(
 		std::vector<Sequence_new>& seqs,
-		std::vector<int>& parent,
 		int kmer_size,
 		double tau)
 {
@@ -614,13 +611,12 @@ void cluster_sequences_st(
 
 	// 写回代表元（保持与原始 seq_id 的对应）
 	for (int i = 0; i < N; ++i) {
-		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 }
 
 void cluster_sequences_st_reuse(
 		std::vector<Sequence_new>& seqs,
-		std::vector<int>& parent,
 		int kmer_size,
 		double tau,
 		ClusterWS& ws)   // ← 复用工作区
@@ -731,9 +727,8 @@ void cluster_sequences_st_reuse(
 	}
 
 	// 写回代表元（保持与原始 seq_id 的对应）
-	//parent.resize(N);
 	for (int i = 0; i < N; ++i) {
-		parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 }
 
@@ -1344,7 +1339,6 @@ void EncodeWordsSoA(const Sequence_new &seq, vector<int> &word_encodes, vector<i
 
 void cluster_sequences_st_less10(
         std::vector<Sequence_new>& seqs,
-        std::vector<int>& parent,
         int kmer_size,
         double tau
 ){
@@ -1412,7 +1406,11 @@ void cluster_sequences_st_less10(
     }
     
     for (int i = 0; i < N; ++i) {
-        parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
+		// global parent
+        //parent[seqs[i].seq_id] = seqs[dsu.find(i)].seq_id;
+		// local parent
+        //parent[i] = seqs[dsu.find(i)].seq_id;
     }
     // cerr<<"Sorting total time: "<<sort_time<<" s\n";
 }

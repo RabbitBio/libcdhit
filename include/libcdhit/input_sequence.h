@@ -15,6 +15,8 @@ struct Input_Sequence
 struct Sequence_new
 {
 	int seq_id;
+	int origin_root_id;
+	int new_root_id;
     const char* data;
 	int length;
 	Sequence_new() {}
