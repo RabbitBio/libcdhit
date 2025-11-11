@@ -7,6 +7,9 @@
 #include <sys/time.h>
 #include <immintrin.h>
 #include <fstream>
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
 
 #define NAA1 21
 #define MAX_SEQ 655360
@@ -166,6 +169,8 @@ struct WorkingBuffer {
     alignas(64) int64_t avx_j_arr[8];
     alignas(64) int64_t avx_m_arr[8];
     alignas(64) int64_t avx_sij_arr[8];
+	
+	alignas(64) int64_t* flat_matrix;
 
     // 构造函数，初始化大小
     WorkingBuffer(int size) {
@@ -182,6 +187,7 @@ class ScoreMatrix { //Matrix
 
 	public:
 		int matrix[MAX_AA][MAX_AA];
+		alignas(64) int64_t* flat_matrix;
 		int gap, ext_gap;
 
 		ScoreMatrix();
@@ -191,12 +197,18 @@ class ScoreMatrix { //Matrix
 		void set_to_na();
 		void set_match( int score );
 		void set_mismatch( int score );
+		void update_flat_matrix();
 }; // END class ScoreMatrix
 
 ScoreMatrix mat;
 /////////////////
 ScoreMatrix::ScoreMatrix()
 {
+	flat_matrix = (int64_t*)aligned_alloc(64, MAX_AA * MAX_AA * sizeof(int64_t));
+	if(!flat_matrix) {
+		fprintf(stderr, "Failed to allocate flat_matrix\n");
+		exit(1);
+	}
 	init();
 }
 
@@ -220,6 +232,16 @@ void ScoreMatrix::set_matrix(int *mat1)
 	for ( i=0; i<MAX_AA; i++)
 		for ( j=0; j<=i; j++)
 			matrix[j][i] = matrix[i][j] = MAX_SEQ * mat1[ k++ ];
+	update_flat_matrix();
+}
+
+void ScoreMatrix::update_flat_matrix()
+{
+	for(int i = 0; i < MAX_AA; i++) {
+		for(int j = 0; j < MAX_AA; j++) {
+			flat_matrix[i * MAX_AA + j] = (int64_t)matrix[i][j];
+		}
+	}
 }
 
 void ScoreMatrix::set_to_na()
@@ -552,7 +574,7 @@ int diag_no_table(
 // FIXME:
 // tags: AVX512, Rotation(Anti-diag), Compact
 // Finished 20/10/2025 mgl
-#define __AVX512F__
+// #define __AVX512F__
 #ifdef __AVX512F__
 
 static inline void print_m512i_epi64(__m512i v, const char *label)
@@ -592,19 +614,11 @@ static inline void pirnt_m512i_epi64_mask(__m512i v, __mmask8 mask, const char *
 	cout<<endl;
 }
 
-int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+int Init_Matrix_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
         int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
         int band_left, int band_center, int band_right, WorkingBuffer& buffer)
 {
-	std::ofstream avx("avx512.tmp");
-    int i, j, k, j1;
-    int jj, kk;
-    int x, y;
-    int iden_no1;
-    int64_t best_score1;
-    iden_no = 0;
-    
-    if ((band_right >= len2) ||
+	if ((band_right >= len2) ||
         (band_left <= -len1) ||
         (band_left > band_right)) return FAILED_FUNC;
         
@@ -631,8 +645,54 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
         if(score_mat[i].size < band_width1) score_mat[i].Resize(band_width1);
         if(back_mat[i].size < band_width1) back_mat[i].Resize(band_width1);
     }
+	return OK_FUNC;
+}
+
+int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+        int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
+        int band_left, int band_center, int band_right, WorkingBuffer& buffer)
+{
+	auto t1 = Clock::now();
+
+    int i, j, k, j1;
+    int jj, kk;
+    int x, y;
+    int iden_no1;
+    int64_t best_score1;
+    iden_no = 0;
+    
+    if ((band_right >= len2) ||
+        (band_left <= -len1) ||
+        (band_left > band_right)) return FAILED_FUNC;
+        
+    int band_width = band_right - band_left + 1;
+    int band_width1 = 17;
+
+    MatrixInt64& score_mat = buffer.score_mat;
+    MatrixInt& back_mat = buffer.back_mat;
+
+    int L = band_left, R = band_right;
+    int kmin = (R < 0) ? -R : (L > 0) ? L : 0;
+    int kmax = (R < len2 - len1) ? (R + 2 * len1) : (L > len2 - len1) ? (2 * len2 - L) : (len1 + len2);
+
+    int lenY = kmax - kmin + 1;
+
+    if(score_mat.size() <= lenY) {
+        VectorInt row(band_width1, 0);
+        VectorInt64 row2(band_width1, 0);
+        while(score_mat.size() <= lenY) {
+            score_mat.Append(row2);
+            back_mat.Append(row);
+        }
+    }
+    for(int i = 0; i <= lenY; i++) {
+        if(score_mat[i].size < band_width1) score_mat[i].Resize(band_width1);
+        if(back_mat[i].size < band_width1) back_mat[i].Resize(band_width1);
+    }
     
     best_score = 0;
+
+	auto t5 = Clock::now();
     
     // 初始化边界
     if (L < 0) {
@@ -664,6 +724,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
     int gap_open[2] = {mat.gap, mat.ext_gap};
     int max_diag = band_center - band_left;
     int extra_score[4] = {4, 3, 2, 1};
+	auto t2 = Clock::now();
 
     // ============ AVX-512 向量化变量定义 ============
     const int SIMD_WIDTH = 8;
@@ -692,8 +753,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
 	__m256i vec_DP_BACK_LEFT = _mm256_set1_epi32(DP_BACK_LEFT);
 	__m256i vec_DP_BACK_TOP  = _mm256_set1_epi32(DP_BACK_TOP);
 	__m256i vec_DP_BACK_LEFT_TOP = _mm256_set1_epi32(DP_BACK_LEFT_TOP);
-
-	double t = 0;
+	__m512i vec_offset = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
 
     // ============ 主循环 ============
     for(int y = kmin + 1; y <= kmax; y++) {
@@ -724,10 +784,8 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
 			int index_x_R = (x_base+1-L+1)>>1;
 			// cout<<"x_base:"<<x_base<<endl;
 
-			__m512i vec_offset = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
 			__m512i vec_x = _mm512_add_epi64(_mm512_set1_epi64(x_base), vec_offset);
 
-			// if(y == kmin+16) print_m512i_epi64(vec_x,"vec_x");
 
 			__m512i vec_i = _mm512_sub_epi64(vec_y, vec_x);
 			vec_i = _mm512_srai_epi64(vec_i, 1);
@@ -741,16 +799,42 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
 			__mmask8 mask = vec_i_gt_0 & vec_i_le_len1 & vec_j_gt_0 & vec_j_le_len2;
 			int count = _mm_popcnt_u32((unsigned int)mask);
 			if(count == 0) continue;
+
+
+			// printf(" (0x%02X)\n", (unsigned int)mask);
+			__m512i vec_i_minus_1 = _mm512_sub_epi64(vec_i,vec_1);
+
+			__m512i vec_j_minus_1 = _mm512_sub_epi64(vec_j,vec_1);
+
+			vec_i_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_i_minus_1);
+			vec_j_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_j_minus_1);
+
+			__m256i vec_i_index = _mm512_cvtepi64_epi32(vec_i_minus_1);
+			__m256i vec_j_index = _mm512_cvtepi64_epi32(vec_j_minus_1);
+
+			__m256i seq1_i32 = _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(),mask,vec_i_index,(const int*)iseq1,1);
 			
-			_mm512_store_epi64(i_arr, vec_i);
-			_mm512_store_epi64(j_arr, vec_j);
-			// double t1 =get_time();
-			for(int index=0; index<SIMD_WIDTH; index++){
-				int bit = (mask >> index) & 1;
-				if(!bit) sij_arr[index] = 0;
-				else sij_arr[index] = mat.matrix[iseq1[i_arr[index]-1]][iseq2[j_arr[index]-1]];
-			}
-			__m512i vec_sij = _mm512_load_si512(sij_arr);
+			__m256i seq2_i32 = _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(),mask,vec_j_index,(const int*)iseq2,1);
+
+			__m256i seq1_vals = _mm256_and_si256(seq1_i32, _mm256_set1_epi32(0xFF));
+			__m256i seq2_vals = _mm256_and_si256(seq2_i32, _mm256_set1_epi32(0xFF));
+
+			__m256i matrix_indices = _mm256_mullo_epi32(seq1_vals, _mm256_set1_epi32(MAX_AA));
+			matrix_indices = _mm256_add_epi32(matrix_indices, seq2_vals);
+			
+			__m512i vec_sij = _mm512_mask_i32gather_epi64(_mm512_setzero_si512(),mask,matrix_indices,mat.flat_matrix,8);
+
+			
+			// _mm512_store_epi64(i_arr, vec_i);
+			// _mm512_store_epi64(j_arr, vec_j);
+			// // double t1 =get_time();
+			// for(int index=0; index<SIMD_WIDTH; index++){
+			// 	int bit = (mask >> index) & 1;
+			// 	if(!bit) sij_arr[index] = 0;
+			// 	else sij_arr[index] = mat.matrix[iseq1[i_arr[index]-1]][iseq2[j_arr[index]-1]];
+			// }
+			// __m512i vec_sij = _mm512_load_si512(sij_arr);
+
 			// double t2 = get_time();
 			// t += t2 -t1;
 
@@ -831,6 +915,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
 		// cout << endl;
 		// if(y > kmin+20) exit(0);
     }
+	auto t3 = Clock::now();
 	// cout<<t<<endl;
 
     // ============ 回溯部分（保持原样）============
@@ -953,6 +1038,18 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
     int umhead = begin1 < begin2 ? begin1 : begin2;
     int umtail = umtail1 < umtail2 ? umtail1 : umtail2;
     int umlen = umhead + umtail;
+
+	auto t4 = Clock::now();
+
+	auto d1 = std::chrono::duration_cast<std::chrono::nanoseconds>(t5-t1);
+	auto d4 = std::chrono::duration_cast<std::chrono::nanoseconds>(t2-t5);
+	auto d2 = std::chrono::duration_cast<std::chrono::nanoseconds>(t3-t2);
+	auto d3 = std::chrono::duration_cast<std::chrono::nanoseconds>(t4-t3);
+
+	cout<<"Alloc Time: "<<d1.count()<<" ns\n";
+	cout<<"Init  Time: "<<d4.count()<<" ns\n";
+	cout<<"Vect  Time: "<<d2.count()<<" ns\n";
+	cout<<"Back  Time: "<<d3.count()<<" ns\n";
     
     if(umlen > 99999999) return FAILED_FUNC;
     if(umlen > len1 * 1.0) return FAILED_FUNC;
@@ -971,12 +1068,44 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
             alninfo[3] = gend2;
         }
     }
-    
     return OK_FUNC;
 }
 
 
 #endif
+
+int Init_Matrix_Compact(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
+		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
+{
+	if ( (band_right >= len2 ) ||
+			(band_left  <= -len1) ||
+			(band_left  > band_right) ) return FAILED_FUNC;
+	int band_width = band_right - band_left +1;
+	int band_width1 = (band_width + 1)/2+1;
+
+	MatrixInt64& score_mat = buffer.score_mat;
+	MatrixInt& back_mat = buffer.back_mat;
+
+	int L = band_left,R = band_right;
+	int kmin = (R<0)?-R:(L>0)?L:0;
+	int kmax = (R < len2 - len1)?(R + 2*len1):(L > len2 - len1)?(2*len2 - L):(len1 + len2);
+
+	int lenY = kmax - kmin + 1;
+	if(score_mat.size()<=lenY){
+		VectorInt row(band_width1,0);
+		VectorInt64 row2(band_width1,0);
+		while(score_mat.size()<=lenY){
+			score_mat.Append(row2);
+			back_mat.Append(row);
+		}
+	}
+	for(int i=0;i<=lenY;i++){
+		if(score_mat[i].size<band_width1) score_mat[i].Resize(band_width1);
+		if(back_mat[i].size<band_width1) back_mat[i].Resize(band_width1);
+	}
+	return OK_FUNC;
+}
 
 // FIXME:
 // Modified after bug fixes,
@@ -1262,6 +1391,39 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 // FIXME:
 // An implementation of a simple rotating array calculation.
 // Finished 13/10/2025 mgl
+
+int Init_Matrix_Rotation(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
+		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
+		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
+{
+	if ( (band_right >= len2 ) ||
+			(band_left  <= -len1) ||
+			(band_left  > band_right) ) return FAILED_FUNC;
+	int band_width = band_right - band_left +1;
+	int band_width1 = band_width + 1;
+	MatrixInt64& score_mat = buffer.score_mat;
+	MatrixInt& back_mat = buffer.back_mat;
+
+	int L = band_left,R = band_right;
+	int kmin = (R<0)?-R:(L>0)?L:0;
+	int kmax = (R < len2 - len1)?(R + 2*len1):(L > len2 - len1)?(2*len2 - L):(len1 + len2);
+
+	int lenY = kmax - kmin + 1;
+	if(score_mat.size()<=lenY){
+		VectorInt row(band_width1,0);
+		VectorInt64 row2(band_width1,0);
+		while(score_mat.size()<=lenY){
+			score_mat.Append(row2);
+			back_mat.Append(row);
+		}
+	}
+	for(int i=0;i<=lenY;i++){
+		if(score_mat[i].size<band_width1) score_mat[i].Resize(band_width1);
+		if(back_mat[i].size<band_width1) back_mat[i].Resize(band_width1);
+	}
+	return OK_FUNC;
+}
+
 int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
 		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
 		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
@@ -1646,6 +1808,39 @@ int rotation_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMat
 #endif
 	fclose( fout );
 #endif
+	return OK_FUNC;
+}
+
+int Init_Matrix( char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat, 
+		int &best_score, int &iden_no, int &alnln, float &dist, int *alninfo,
+		int band_left, int band_center, int band_right, WorkingBuffer & buffer)
+{
+	if ( (band_right >= len2 ) ||
+		(band_left  <= -len1) ||
+		(band_left  > band_right) ) return FAILED_FUNC;
+
+	// allocate mem for score_mat[len1][len2] etc
+	int band_width = band_right - band_left + 1;
+	int band_width1 = band_width + 1;
+
+    // score_mat, back_mat [i][j]: i index of seqi (0 to len(seqi)-1), j index of band (0 to band_width-1)
+	MatrixInt64 & score_mat = buffer.score_mat;
+	MatrixInt   & back_mat = buffer.back_mat;
+
+	//printf( "%i  %i\n", band_right, band_left );
+
+	if( score_mat.size() <= len1 ){
+		VectorInt   row( band_width1, 0 );
+		VectorInt64 row2( band_width1, 0 );
+		while( score_mat.size() <= len1 ){
+			score_mat.Append( row2 );
+			back_mat.Append( row );
+		}
+	}
+	for(int i=0; i<=len1; i++){
+		if( score_mat[i].Size() < band_width1 ) score_mat[i].Resize( band_width1 );
+		if( back_mat[i].Size() < band_width1 ) back_mat[i].Resize( band_width1 );
+	}
 	return OK_FUNC;
 }
 
@@ -2053,6 +2248,7 @@ int local_band_align( char iseq1[], char iseq2[], int len1, int len2, ScoreMatri
 
 	return OK_FUNC;
 } // END int local_band_align
+
 int main(int argc, char* argv[]){
     gzFile fp1;
 	kseq_t *ks1;
@@ -2103,58 +2299,110 @@ int main(int argc, char* argv[]){
     char* seq2 = seqs[0].seq.data();
     int len1 = seqs[1].len;
     int len2 = seqs[0].len;
-    double t0 = get_time();
+
+	auto t0 = Clock::now();
     // 计算二元对的倒排表
     ComputeAAP(seq1, len1, buffer);
-    double t1 = get_time();
-    cerr << "ComputeAAP time : " << t1 - t0 << " seconds" << endl;
+    
+	auto t1 = Clock::now();
+
+
     // 计算最佳带宽和匹配结果
     int best_sum, band_left, band_center, band_right,best_score,tiden_no,alnln;
     int talign_info[5];
     float tiden_pc, distance=0;
     diag_test_aapn( seq2, len1, len2, buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
 
+	auto t2 = Clock::now();
+
 	// diag_no_table(seq1,len1,seq2,len2,buffer, best_sum, band_width, band_left, band_center, band_right, required_aa1);
     // int required_aa2 = 31740;
     // if ( best_sum < required_aa2 ) exit(0);
     int rc = FAILED_FUNC;
-    double t2 = get_time();
-    cerr << "diag time : " << t2 - t1 << " seconds" << endl;
+	int tmp = FAILED_FUNC;
+
+	// double t2 = get_time();
+
     cout << "Best sum: " << best_sum << endl;
     cout << "Band left: " << band_left << ", Band center: " << band_center << ", Band right: " << band_right << endl;
 
-	// cout << "\nLocal Band Align"<<endl;
-    // rc=local_band_align(seq1, seq2, len1, len2, mat,
-	// 				best_score, tiden_no, alnln, distance, talign_info,
-	// 				band_left, band_center, band_right, buffer);
+#ifdef ORIGIN
+	tmp = Init_Matrix(seq1, seq2, len1, len2, mat,
+			best_score, tiden_no, alnln, distance, talign_info,
+			band_left, band_center, band_right, buffer);
+#endif
+
+#ifdef COMPACT
+	tmp = Init_Matrix_Compact(seq1, seq2, len1, len2, mat,
+			best_score, tiden_no, alnln, distance, talign_info,
+			band_left, band_center, band_right, buffer);
+#endif
+
+#ifdef ROTATION
+	tmp = Init_Matrix_Rotation(seq1, seq2, len1, len2, mat,
+			best_score, tiden_no, alnln, distance, talign_info,
+			band_left, band_center, band_right, buffer);
+#endif
+
+#ifdef __AVX512F__
+#if !defined(ORIGIN) && !defined(COMPACT)
+	tmp = Init_Matrix_AVX512(seq1, seq2, len1, len2, mat,
+			best_score, tiden_no, alnln, distance, talign_info,
+			band_left, band_center, band_right, buffer);
+#endif
+#endif
+
+    auto t3 = Clock::now();
+
+
+#ifdef ORIGIN
+	cout << "\n<Method Info> Local Band Align"<<endl;
+	rc=local_band_align(seq1, seq2, len1, len2, mat,
+				best_score, tiden_no, alnln, distance, talign_info,
+				band_left, band_center, band_right, buffer);
+#endif
 	
-	// cout << "tiden_no  "<<tiden_no<<endl;
-	// cout << "alnln  "	<<alnln<<endl;
-	// cout << "distance  "<<distance<<endl;
-    
-	// cout<<"\nRotation Band Align"<<endl;
-	// rc=rotation_compact_band_align(seq1, seq2, len1, len2, mat,
-	// 				best_score, tiden_no, alnln, distance, talign_info,
-	// 				band_left, band_center, band_right, buffer);
-	// cout << "best_score "<<best_score<<endl;
-	// cout << "tiden_no  "<<tiden_no<<endl;
-	// cout << "alnln  "	<<alnln<<endl;
-	// cout << "distance  "<<distance<<endl;
-
-	// buffer.score_mat.clear();
-	// buffer.back_mat.clear();
-
-	cout<<"\nAVX512 Band Align"<<endl;
-	rc=rotation_band_align_AVX512(seq1, seq2, len1, len2, mat,
+#ifdef COMPACT
+	cout<<"\n<Method Info> Rotation Compact Band Align"<<endl;
+	rc=rotation_compact_band_align(seq1, seq2, len1, len2, mat,
 					best_score, tiden_no, alnln, distance, talign_info,
 					band_left, band_center, band_right, buffer);
+#endif
+	
+#ifdef ROTATION
+	cout<<"\n<Method Info> Rotation Band Align"<<endl;
+	rc = rotation_band_align(seq1, seq2, len1, len2, mat,
+					best_score, tiden_no, alnln, distance, talign_info,
+					band_left, band_center, band_right, buffer);
+#endif
+
+#ifdef __AVX512F__
+#if !defined(ORIGIN) && !defined(COMPACT) && !defined(ROTATION)
+	cout<<"\n<Method Info> AVX512 Band Align"<<endl;
+	rc = rotation_band_align_AVX512(seq1, seq2, len1, len2, mat,
+				best_score, tiden_no, alnln, distance, talign_info,
+				band_left, band_center, band_right, buffer);
+#endif
+#endif
+
+	auto t4 = Clock::now();
 	
 	cout << "best_score "<<best_score<<endl;
 	cout << "tiden_no  "<<tiden_no<<endl;
 	cout << "alnln  "	<<alnln<<endl;
 	cout << "distance  "<<distance<<endl;
 
-	double t3 = get_time();
-    cerr << "\nlocal_band_align time : " << t3 - t2 << " seconds" << endl;
+	auto d0 = std::chrono::duration_cast<std::chrono::nanoseconds>(t1-t0);
+	auto d1 = std::chrono::duration_cast<std::chrono::nanoseconds>(t2-t1);
+	auto d2 = std::chrono::duration_cast<std::chrono::nanoseconds>(t3-t2);
+	auto d3 = std::chrono::duration_cast<std::chrono::nanoseconds>(t4-t3);
+
+	cout << "[Time Info] ComputeAPP\tTime: "<<d0.count()<<" ns\n";
+	cout << "[Time Info] diag_test_aapn\tTime: "<<d1.count()<<" ns\n";
+	cout << "[Time Info] Init_Matrix\tTime: "<<d2.count()<<" ns\n";
+	cout << "[Time Info] band_align\tTime: "<<d3.count()<<" ns\n";
+
+	// double t3 = get_time();
+    // cerr << "\nlocal_band_align time : " << t3 - t2 << " seconds" << endl;
     return 0;
 }
