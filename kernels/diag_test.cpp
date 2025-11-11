@@ -6,6 +6,7 @@
 #include <zlib.h>
 #include <sys/time.h>
 #include <immintrin.h>
+#include <fstream>
 
 #define NAA1 21
 #define MAX_SEQ 655360
@@ -160,20 +161,12 @@ struct WorkingBuffer {
     vector<int> diag_score2; // 存储加权命中次数
     MatrixInt64  score_mat;
     MatrixInt    back_mat;
-	alignas(64) int64_t avx_x_arr[8];
+
     alignas(64) int64_t avx_i_arr[8];
     alignas(64) int64_t avx_j_arr[8];
     alignas(64) int64_t avx_m_arr[8];
     alignas(64) int64_t avx_sij_arr[8];
-    alignas(64) int64_t avx_best_scores[8];
-    alignas(64) int32_t avx_backs[8];
-    alignas(64) int64_t avx_scores_lefttop[8];
-    alignas(64) int64_t avx_scores_left[8];
-    alignas(64) int32_t avx_backs_left[8];
-    alignas(64) int64_t avx_gaps_left[8];
-    alignas(64) int64_t avx_scores_top[8];
-    alignas(64) int32_t avx_backs_top[8];
-    alignas(64) int64_t avx_gaps_top[8];
+
     // 构造函数，初始化大小
     WorkingBuffer(int size) {
         taap.resize(NAA2, 0);
@@ -562,10 +555,48 @@ int diag_no_table(
 #define __AVX512F__
 #ifdef __AVX512F__
 
+static inline void print_m512i_epi64(__m512i v, const char *label)
+{
+    alignas(64) int64_t data[8];
+    _mm512_store_si512(data, v);
+
+    if (label) printf("%s: ", label);
+    for (int i = 0; i < 8; i++) {
+        printf("%lld ", (long long)data[i]);
+    }
+    printf("\n");
+}
+
+static inline void print_m256i_epi64(__m256i v, const char *label)
+{
+    alignas(32) int32_t data[8];
+    _mm256_store_si256((__m256i*)data, v);
+
+    if (label) printf("%s: ", label);
+    for (int i = 0; i < 8; i++) {
+        printf("%lld ", data[i]);
+    }
+    printf("\n");
+}
+
+static inline void pirnt_m512i_epi64_mask(__m512i v, __mmask8 mask, const char *label){
+	alignas(64) int64_t data[8];
+    _mm512_store_si512(data, v);
+
+    if (label) printf("%s: ", label);
+	for(int index=0; index<8; index++){
+		int bit = (mask >> index) & 1;
+		if(!bit) continue;
+		cout << data[index]<<" ";
+	}
+	cout<<endl;
+}
+
 int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix &mat,
         int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
         int band_left, int band_center, int band_right, WorkingBuffer& buffer)
 {
+	std::ofstream avx("avx512.tmp");
     int i, j, k, j1;
     int jj, kk;
     int x, y;
@@ -578,7 +609,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
         (band_left > band_right)) return FAILED_FUNC;
         
     int band_width = band_right - band_left + 1;
-    int band_width1 = (band_width + 1) / 2 + 1;
+    int band_width1 = 17;
 
     MatrixInt64& score_mat = buffer.score_mat;
     MatrixInt& back_mat = buffer.back_mat;
@@ -637,32 +668,48 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
     // ============ AVX-512 向量化变量定义 ============
     const int SIMD_WIDTH = 8;
     
-    // 在堆上分配或使用static避免栈溢出
-    int64_t* x_arr = buffer.avx_x_arr;
     int64_t* i_arr = buffer.avx_i_arr;
     int64_t* j_arr = buffer.avx_j_arr;
     int64_t* m_arr = buffer.avx_m_arr;
     int64_t* sij_arr = buffer.avx_sij_arr;
-    int64_t* best_scores = buffer.avx_best_scores;
-    int32_t* backs = buffer.avx_backs;
-    
-    int64_t* scores_lefttop = buffer.avx_scores_lefttop;
-    int64_t* scores_left = buffer.avx_scores_left;
-    int32_t* backs_left = buffer.avx_backs_left;
-    int64_t* gaps_left = buffer.avx_gaps_left;
-    int64_t* scores_top = buffer.avx_scores_top;
-    int32_t* backs_top = buffer.avx_backs_top;
-    int64_t* gaps_top = buffer.avx_gaps_top;
+
+
+	__m512i vec_0 = _mm512_setzero_si512();
+	__m512i vec_1 = _mm512_set1_epi64(1);
+	__m512i vec_3 = _mm512_set1_epi64(3);
+	__m512i vec_4 = _mm512_set1_epi64(4);
+	
+	__m512i vec_len1 = _mm512_set1_epi64(len1);
+	__m512i vec_len2 = _mm512_set1_epi64(len2);
+	__m512i vec_lenY = _mm512_set1_epi64(lenY);
+	__m512i vec_R = _mm512_set1_epi64(R);
+	
+	__m512i vec_band_center = _mm512_set1_epi64(band_center);
+
+	__m512i vec_ext_gap   = _mm512_set1_epi64(mat.ext_gap);
+	__m512i vec_gap_open  = _mm512_set1_epi64(mat.gap);
+
+	__m256i vec_DP_BACK_LEFT = _mm256_set1_epi32(DP_BACK_LEFT);
+	__m256i vec_DP_BACK_TOP  = _mm256_set1_epi32(DP_BACK_TOP);
+	__m256i vec_DP_BACK_LEFT_TOP = _mm256_set1_epi32(DP_BACK_LEFT_TOP);
+
+	double t = 0;
 
     // ============ 主循环 ============
     for(int y = kmin + 1; y <= kmax; y++) {
         int offset = (abs(y + L)) % 2;
         int x_start = L + offset;
-        int x_end = R;
+
+		__m512i vec_y = _mm512_set1_epi64(y);
+        __m512i vec_y_minus_kmin = _mm512_set1_epi64(y - kmin);
         
-        int num_elements = (x_end - x_start) / 2 + 1;
+        int num_elements = 16;
         int vec_iterations = num_elements / SIMD_WIDTH;
-        
+
+		int index_y = y-kmin;
+		int index_y1 = y-1-kmin;
+		int index_y2 = y-2-kmin;
+
         // 预取下一行数据
         if(y + 1 <= kmax) {
             _mm_prefetch((const char*)&score_mat[y + 1 - kmin][0], _MM_HINT_T0);
@@ -672,259 +719,129 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
         // ============ 向量化主循环 ============
         for(int vec_idx = 0; vec_idx < vec_iterations; vec_idx++) {
             int x_base = x_start + vec_idx * SIMD_WIDTH * 2;
-            
-            // 计算8个x坐标及对应的i, j, m索引
-            for(int k = 0; k < 8; k++) {
-                x_arr[k] = x_base + k * 2;
-                i_arr[k] = (y - x_arr[k]) >> 1;
-                j_arr[k] = (x_arr[k] + y) >> 1;
-                m_arr[k] = (x_arr[k] - L + 1) >> 1;
-            }
-            
-            // **关键修复：完整的边界检查**
-            __mmask8 valid_mask = 0xFF;
-            for(int k = 0; k < 8; k++) {
-                // 检查i, j范围
-                if(i_arr[k] <= 0 || i_arr[k] > len1 || 
-                   j_arr[k] <= 0 || j_arr[k] > len2) {
-                    valid_mask &= ~(1 << k);
-                    continue;
-                }
-                
-                // **关键：检查m索引是否在有效范围内**
-                if(m_arr[k] < 0 || m_arr[k] >= band_width1) {
-                    valid_mask &= ~(1 << k);
-                    continue;
-                }
-                
-                // **关键：检查y索引是否在有效范围内**
-                if(y - kmin < 0 || y - kmin > lenY) {
-                    valid_mask &= ~(1 << k);
-                    continue;
-                }
-            }
-            
-            if(valid_mask == 0) continue;
-            
-            // 加载匹配分数
-            for(int k = 0; k < 8; k++) {
-                if(valid_mask & (1 << k)) {
-                    int ci = iseq1[i_arr[k] - 1];
-                    int cj = iseq2[j_arr[k] - 1];
-                    sij_arr[k] = mat.matrix[ci][cj];
-                    
-                    int extra = extra_score[abs(x_arr[k] - band_center) & 3];
-                    if(sij_arr[k] > 0) sij_arr[k] += extra;
-                } else {
-                    sij_arr[k] = 0;
-                }
-            }
-            
-            __m512i vec_sij = _mm512_load_epi64(sij_arr);
-            
-            // 初始化
-            for(int k = 0; k < 8; k++) {
-                if(valid_mask & (1 << k)) {
-                    best_scores[k] = score_mat[y - kmin][m_arr[k]];
-                    backs[k] = back_mat[y - kmin][m_arr[k]];
-                } else {
-                    best_scores[k] = INT64_MIN;
-                    backs[k] = 0;
-                }
-            }
-            
-            __m512i vec_best_score = _mm512_load_epi64(best_scores);
-            
-            // ============ 方向1: 左上 (x, y-2) ============
-            if(y - 2 >= kmin) {
-                for(int k = 0; k < 8; k++) {
-                    if(valid_mask & (1 << k)) {
-                        // **安全检查**
-                        int y_idx = y - 2 - kmin;
-                        if(y_idx >= 0 && y_idx <= lenY && m_arr[k] < band_width1) {
-                            scores_lefttop[k] = score_mat[y_idx][m_arr[k]];
-                        } else {
-                            scores_lefttop[k] = INT64_MIN;
-                        }
-                    } else {
-                        scores_lefttop[k] = INT64_MIN;
-                    }
-                }
-                
-                __m512i vec_prev_lt = _mm512_load_epi64(scores_lefttop);
-                __m512i vec_score_lt = _mm512_add_epi64(vec_prev_lt, vec_sij);
-                
-                __mmask8 better_mask = _mm512_cmpgt_epi64_mask(vec_score_lt, vec_best_score);
-                better_mask &= valid_mask;
-                
-                vec_best_score = _mm512_mask_blend_epi64(better_mask, vec_best_score, vec_score_lt);
-                
-                for(int k = 0; k < 8; k++) {
-                    if(better_mask & (1 << k)) {
-                        backs[k] = DP_BACK_LEFT_TOP;
-                    }
-                }
-            }
-            
-            // ============ 方向2: 左 (x-1, y-1) ============
-            __mmask8 left_valid = 0;
-            
-            for(int k = 0; k < 8; k++) {
-                if((valid_mask & (1 << k)) && x_arr[k] - 1 >= L && y - 1 >= kmin) {
-                    int m_left = ((x_arr[k] - 1) - L + 1) >> 1;
-                    int y_idx = y - 1 - kmin;
-                    
-                    // **安全检查**
-                    if(y_idx >= 0 && y_idx <= lenY && m_left >= 0 && m_left < band_width1) {
-                        scores_left[k] = score_mat[y_idx][m_left];
-                        backs_left[k] = back_mat[y_idx][m_left];
-                        
-                        int gap0 = gap_open[(i_arr[k] == len1) | (j_arr[k] == len2)];
-                        gaps_left[k] = (backs_left[k] == DP_BACK_LEFT) ? mat.ext_gap : gap0;
-                        
-                        left_valid |= (1 << k);
-                    } else {
-                        scores_left[k] = INT64_MIN;
-                        gaps_left[k] = 0;
-                    }
-                } else {
-                    scores_left[k] = INT64_MIN;
-                    gaps_left[k] = 0;
-                }
-            }
-            
-            if(left_valid) {
-                __m512i vec_prev_left = _mm512_load_epi64(scores_left);
-                __m512i vec_gap_left = _mm512_load_epi64(gaps_left);
-                __m512i vec_score_left = _mm512_add_epi64(vec_prev_left, vec_gap_left);
-                
-                __mmask8 better_mask = _mm512_cmpgt_epi64_mask(vec_score_left, vec_best_score);
-                better_mask &= left_valid;
-                
-                vec_best_score = _mm512_mask_blend_epi64(better_mask, vec_best_score, vec_score_left);
-                
-                for(int k = 0; k < 8; k++) {
-                    if(better_mask & (1 << k)) {
-                        backs[k] = DP_BACK_LEFT;
-                    }
-                }
-            }
-            
-            // ============ 方向3: 上 (x+1, y-1) ============
-            __mmask8 top_valid = 0;
-            
-            for(int k = 0; k < 8; k++) {
-                if((valid_mask & (1 << k)) && x_arr[k] + 1 <= R && y - 1 >= kmin) {
-                    int m_top = ((x_arr[k] + 1) - L + 1) >> 1;
-                    int y_idx = y - 1 - kmin;
-                    
-                    // **安全检查**
-                    if(y_idx >= 0 && y_idx <= lenY && m_top >= 0 && m_top < band_width1) {
-                        scores_top[k] = score_mat[y_idx][m_top];
-                        backs_top[k] = back_mat[y_idx][m_top];
-                        
-                        int gap0 = gap_open[(i_arr[k] == len1) | (j_arr[k] == len2)];
-                        gaps_top[k] = (backs_top[k] == DP_BACK_TOP) ? mat.ext_gap : gap0;
-                        
-                        top_valid |= (1 << k);
-                    } else {
-                        scores_top[k] = INT64_MIN;
-                        gaps_top[k] = 0;
-                    }
-                } else {
-                    scores_top[k] = INT64_MIN;
-                    gaps_top[k] = 0;
-                }
-            }
-            
-            if(top_valid) {
-                __m512i vec_prev_top = _mm512_load_epi64(scores_top);
-                __m512i vec_gap_top = _mm512_load_epi64(gaps_top);
-                __m512i vec_score_top = _mm512_add_epi64(vec_prev_top, vec_gap_top);
-                
-                __mmask8 better_mask = _mm512_cmpgt_epi64_mask(vec_score_top, vec_best_score);
-                better_mask &= top_valid;
-                
-                vec_best_score = _mm512_mask_blend_epi64(better_mask, vec_best_score, vec_score_top);
-                
-                for(int k = 0; k < 8; k++) {
-                    if(better_mask & (1 << k)) {
-                        backs[k] = DP_BACK_TOP;
-                    }
-                }
-            }
-            
-            // 写回结果
-            _mm512_store_epi64(best_scores, vec_best_score);
-            
-            for(int k = 0; k < 8; k++) {
-                if(valid_mask & (1 << k)) {
-                    score_mat[y - kmin][m_arr[k]] = best_scores[k];
-                    back_mat[y - kmin][m_arr[k]] = backs[k];
-                }
-            }
+			int index_x = (x_base - L+1)>>1;
+			int index_x_L = (x_base-1-L+1)>>1;
+			int index_x_R = (x_base+1-L+1)>>1;
+			// cout<<"x_base:"<<x_base<<endl;
+
+			__m512i vec_offset = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+			__m512i vec_x = _mm512_add_epi64(_mm512_set1_epi64(x_base), vec_offset);
+
+			// if(y == kmin+16) print_m512i_epi64(vec_x,"vec_x");
+
+			__m512i vec_i = _mm512_sub_epi64(vec_y, vec_x);
+			vec_i = _mm512_srai_epi64(vec_i, 1);
+			__m512i vec_j = _mm512_add_epi64(vec_x, vec_y);
+			vec_j = _mm512_srai_epi64(vec_j, 1);
+
+			__mmask8 vec_i_gt_0 	= _mm512_cmpgt_epi64_mask(vec_i, vec_0);
+			__mmask8 vec_i_le_len1  = _mm512_cmple_epi64_mask(vec_i, vec_len1);
+			__mmask8 vec_j_gt_0 	= _mm512_cmpgt_epi64_mask(vec_j, vec_0);
+			__mmask8 vec_j_le_len2  = _mm512_cmple_epi64_mask(vec_j, vec_len2);
+			__mmask8 mask = vec_i_gt_0 & vec_i_le_len1 & vec_j_gt_0 & vec_j_le_len2;
+			int count = _mm_popcnt_u32((unsigned int)mask);
+			if(count == 0) continue;
+			
+			_mm512_store_epi64(i_arr, vec_i);
+			_mm512_store_epi64(j_arr, vec_j);
+			// double t1 =get_time();
+			for(int index=0; index<SIMD_WIDTH; index++){
+				int bit = (mask >> index) & 1;
+				if(!bit) sij_arr[index] = 0;
+				else sij_arr[index] = mat.matrix[iseq1[i_arr[index]-1]][iseq2[j_arr[index]-1]];
+			}
+			__m512i vec_sij = _mm512_load_si512(sij_arr);
+			// double t2 = get_time();
+			// t += t2 -t1;
+
+			// int extra = extra_score[abs(x-band_center)&3];
+			__m512i vec_extra = _mm512_sub_epi64(vec_x,vec_band_center);
+			vec_extra = _mm512_abs_epi64(vec_extra);
+			vec_extra = _mm512_and_si512(vec_extra,vec_3);
+			vec_extra = _mm512_sub_epi64(vec_4,vec_extra);
+
+			__mmask8 mask_sij = _mm512_cmpgt_epi64_mask(vec_sij, vec_0);
+			mask_sij = mask_sij & mask;
+			vec_extra = _mm512_mask_blend_epi64(mask_sij, vec_0, vec_extra);	
+			vec_sij = _mm512_add_epi64(vec_sij, vec_extra);
+
+			
+
+			__m512i vec_best_score1 = _mm512_loadu_si512(&score_mat[index_y][index_x]);
+			__m256i vec_back = _mm256_loadu_si256((__m256i*)&back_mat[index_y][index_x]);
+			
+			
+			// left-top
+			if(y-2 >= kmin){
+				__m512i vec_score_y2 = _mm512_loadu_si512(&score_mat[index_y2][index_x]);
+				vec_best_score1 = _mm512_add_epi64(vec_score_y2, vec_sij);
+				vec_back = _mm256_set1_epi32(DP_BACK_LEFT_TOP);
+			}
+
+			__mmask8 mask_gap = _mm512_cmpeq_epi64_mask(vec_i, vec_len1) | _mm512_cmpeq_epi64_mask(vec_j, vec_len2);
+			__m512i vec_gap0 = _mm512_mask_blend_epi64(mask_gap,vec_gap_open,vec_ext_gap);
+			__m512i vec_gap;
+			__m512i vec_score;
+
+			// left
+			if(y-1 >= kmin){
+				vec_gap = vec_gap0;
+				__m512i vec_score_y1;
+				__m256i vec_back_y1;
+
+				vec_score_y1 = _mm512_loadu_si512(&score_mat[index_y1][index_x_L]);
+				vec_back_y1 = _mm256_loadu_si256((__m256i*)&back_mat[index_y1][index_x_L]);
+
+				__mmask8 gap_flag = _mm256_cmpeq_epi32_mask(vec_back_y1, vec_DP_BACK_LEFT);
+
+				vec_gap = _mm512_mask_blend_epi64(gap_flag, vec_gap0, vec_ext_gap);
+				
+				vec_score = _mm512_add_epi64(vec_score_y1, vec_gap);
+
+				__mmask8 modify_flag = _mm512_cmpgt_epi64_mask(vec_score, vec_best_score1) & (0xFE | ((offset) | (vec_idx)));
+				vec_best_score1 = _mm512_mask_blend_epi64(modify_flag, vec_best_score1, vec_score);
+				vec_back = _mm256_mask_blend_epi32(modify_flag,vec_back,vec_DP_BACK_LEFT);
+			}
+
+			// top
+			if(y-1 >= kmin){
+				vec_gap = vec_gap0;
+				__m512i vec_score_y1;
+				__m256i vec_back_y1;
+				vec_score_y1 = _mm512_loadu_si512(&score_mat[index_y1][index_x_R]);
+				vec_back_y1 = _mm256_loadu_si256((__m256i*)&back_mat[index_y1][index_x_R]);
+				
+				__mmask8 gap_flag = _mm256_cmpeq_epi32_mask(vec_back_y1, vec_DP_BACK_TOP);
+				vec_gap = _mm512_mask_blend_epi64(gap_flag, vec_gap0, vec_ext_gap);
+				
+				vec_score = _mm512_add_epi64(vec_score_y1, vec_gap);
+				__mmask8 modify_flag = _mm512_cmpgt_epi64_mask(vec_score, vec_best_score1) & _mm512_cmple_epi64_mask(_mm512_add_epi64(vec_x,vec_1),vec_R);
+				vec_best_score1 = _mm512_mask_blend_epi64(modify_flag, vec_best_score1, vec_score);
+				vec_back = _mm256_mask_blend_epi32(modify_flag,vec_back,vec_DP_BACK_TOP);
+			}
+			_mm512_mask_storeu_epi64(&score_mat[index_y][index_x],mask,vec_best_score1);
+			_mm256_mask_storeu_epi32((__m256i*)&back_mat[index_y][index_x],mask,vec_back);
         }
-        
-        // ============ 处理剩余元素 (标量) ============
-        for(int k = vec_iterations * SIMD_WIDTH; k < num_elements; k++) {
-            int x = x_start + k * 2;
-            int i = (y - x) >> 1;
-            int j = (x + y) >> 1;
-            
-            if(i <= 0 || i > len1 || j <= 0 || j > len2) continue;
-            
-            int ci = iseq1[i - 1];
-            int cj = iseq2[j - 1];
-            int sij = mat.matrix[ci][cj];
-            int extra = extra_score[abs(x - band_center) & 3];
-            sij += extra * (sij > 0);
-            
-            int m = (x - L + 1) >> 1;
-            int64_t best_score1 = score_mat[y - kmin][m];
-            int back = back_mat[y - kmin][m];
-            
-            if(y - 2 >= kmin) {
-                best_score1 = score_mat[y - 2 - kmin][m] + sij;
-                back = DP_BACK_LEFT_TOP;
-            }
-            
-            int gap0 = gap_open[(i == len1) | (j == len2)];
-            int64_t score;
-            
-            if(x - 1 >= L && y - 1 >= kmin) {
-                int m_left = ((x - 1) - L + 1) >> 1;
-                int gap = (back_mat[y - 1 - kmin][m_left] == DP_BACK_LEFT) ? mat.ext_gap : gap0;
-                score = score_mat[y - 1 - kmin][m_left] + gap;
-                if(score > best_score1) {
-                    best_score1 = score;
-                    back = DP_BACK_LEFT;
-                }
-            }
-            
-            if(x + 1 <= R && y - 1 >= kmin) {
-                int m_top = ((x + 1) - L + 1) >> 1;
-                int gap = (back_mat[y - 1 - kmin][m_top] == DP_BACK_TOP) ? mat.ext_gap : gap0;
-                score = score_mat[y - 1 - kmin][m_top] + gap;
-                if(score > best_score1) {
-                    best_score1 = score;
-                    back = DP_BACK_TOP;
-                }
-            }
-            
-            score_mat[y - kmin][m] = best_score1;
-            back_mat[y - kmin][m] = back;
-        }
+		// // if(y <= kmax - 20) continue;
+		// for(int x=L+(abs(y+L))%2;x<=R;x+=2){
+		// 	// avx<<score_mat[y-kmin][(x-L+1)>>1]<<" ";
+		// 	cout << score_mat[y-kmin][(x-L+1)>>1]<<" ";
+		// }
+		// // avx<<endl;
+		// cout << endl;
+		// if(y > kmin+20) exit(0);
     }
+	// cout<<t<<endl;
 
     // ============ 回溯部分（保持原样）============
     x = (R < len2 - len1) ? R : (L > len2 - len1) ? L : len2 - len1;
     y = kmax;
     i = (-x + y) >> 1;
     j = (x + y) >> 1;
-    printf("\n(%d,%d)\n", i, j);
+    // printf("\n(%d,%d)\n", i, j);
     best_score = score_mat[y - kmin][(x - L + 1) >> 1];
     best_score1 = score_mat[y - kmin][(x - L + 1) >> 1];
-    printf("%2li(%2i) ", best_score1, iden_no1);
+    // printf("%2li(%2i) ", best_score1, iden_no1);
 
     int back = back_mat[y - kmin][(x - L + 1) >> 1];
     int last = back;
@@ -1069,6 +986,7 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 		int &best_score, int& iden_no, int& alnln, float &dist, int* alninfo,
 		int band_left, int band_center, int band_right, WorkingBuffer& buffer)
 {
+	std::ofstream noavx("noavx.tmp");
 	int i,j,k,j1;
 	int jj,kk;
 	int x,y;
@@ -1079,7 +997,7 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 			(band_left  <= -len1) ||
 			(band_left  > band_right) ) return FAILED_FUNC;
 	int band_width = band_right - band_left +1;
-	int band_width1 = (band_width + 1)/2;
+	int band_width1 = (band_width + 1)/2+1;
 
 	MatrixInt64& score_mat = buffer.score_mat;
 	MatrixInt& back_mat = buffer.back_mat;
@@ -1156,13 +1074,16 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 				best_score1 = score_mat[y-2-kmin][(x-L+1)>>1] + sij;
 				back = DP_BACK_LEFT_TOP;
 			}
+			
 			int gap0 = gap_open[(i==len1)|(j==len2)];
 			int gap = 0;
 			int64_t score;
 			// try (x-1,y-1)/(i,j-1) the left of original array
 			if(x-1>=L && y-1>=kmin){
 				gap = gap0;
+
 				if(back_mat[y-1-kmin][(x-1-L+1)>>1] == DP_BACK_LEFT) gap = mat.ext_gap;
+				// cout<<score_mat[y-1-kmin][(x-1-L+1)>>1]+gap<<" ";
 				if( (score = score_mat[y-1-kmin][(x-1-L+1)>>1]+gap) > best_score1 ){
 					back = DP_BACK_LEFT;
 					best_score1 = score;
@@ -1179,7 +1100,17 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 			}
 			score_mat[y-kmin][(x-L+1)>>1] = best_score1;
 			back_mat[y-kmin][(x-L+1)>>1] = back;
+			// cout<<best_score1<<" ";
 		}
+
+		// // if(y <= kmax - 20) continue;
+		// for(int x=L+(abs(y+L))%2;x<=R;x+=2){
+		// 	// noavx<<score_mat[y-kmin][(x-L+1)>>1]<<" ";
+		// 	cout<<score_mat[y-kmin][(x-L+1)>>1]<<" ";
+		// }
+		// // noavx<<endl;
+		// cout<<endl;
+		// if(y > kmin+20) return 0;
 	}
 
 	// double t1 = get_time();
@@ -1188,11 +1119,11 @@ int rotation_compact_band_align(char iseq1[], char iseq2[], int len1, int len2, 
 	x = (R<len2-len1)?R:(L>len2-len1)?L:len2-len1;
 	y = kmax;
 	i = (-x+y)>>1, j = (x+y)>>1;
-	printf("\n(%d,%d)\n",i,j);
+	// printf("\n(%d,%d)\n",i,j);
 	best_score = score_mat[y-kmin][(x-L+1)>>1];
 	best_score1 = score_mat[y-kmin][(x-L+1)>>1];
 	// cout<<best_score<<endl;
-	printf("%2i(%2i) ",best_score1,iden_no1);
+	// printf("%2li(%2i) ",best_score1,iden_no1);
 
 	int back = back_mat[y-kmin][(x-L+1)>>1];
 	int last = back;
@@ -2205,16 +2136,20 @@ int main(int argc, char* argv[]){
 	// rc=rotation_compact_band_align(seq1, seq2, len1, len2, mat,
 	// 				best_score, tiden_no, alnln, distance, talign_info,
 	// 				band_left, band_center, band_right, buffer);
-	
+	// cout << "best_score "<<best_score<<endl;
 	// cout << "tiden_no  "<<tiden_no<<endl;
 	// cout << "alnln  "	<<alnln<<endl;
 	// cout << "distance  "<<distance<<endl;
+
+	// buffer.score_mat.clear();
+	// buffer.back_mat.clear();
 
 	cout<<"\nAVX512 Band Align"<<endl;
 	rc=rotation_band_align_AVX512(seq1, seq2, len1, len2, mat,
 					best_score, tiden_no, alnln, distance, talign_info,
 					band_left, band_center, band_right, buffer);
 	
+	cout << "best_score "<<best_score<<endl;
 	cout << "tiden_no  "<<tiden_no<<endl;
 	cout << "alnln  "	<<alnln<<endl;
 	cout << "distance  "<<distance<<endl;
