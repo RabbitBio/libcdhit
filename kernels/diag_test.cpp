@@ -1049,7 +1049,7 @@ int rotation_band_align_AVX2(char iseq1[], char iseq2[], int len1, int len2, Sco
 // FIXME:
 // tags: AVX512, Rotation(Anti-diag), Compact
 // Finished 20/10/2025 mgl
-// #define __AVX512F__
+#define __AVX512F__
 #ifdef __AVX512F__
 
 static inline void print_m512i_epi64(__m512i v, const char* label) {
@@ -1063,7 +1063,7 @@ static inline void print_m512i_epi64(__m512i v, const char* label) {
     printf("\n");
 }
 
-static inline void print_m256i_epi64(__m256i v, const char* label) {
+static inline void print_m256i_epi32(__m256i v, const char* label) {
     alignas(32) int32_t data[8];
     _mm256_store_si256((__m256i*)data, v);
 
@@ -1116,6 +1116,71 @@ int Init_Matrix_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatr
         if (back_mat[i].size < band_width1) back_mat[i].Resize(band_width1);
     }
     return OK_FUNC;
+}
+
+alignas(256) static const uint8_t REVERSE_MASK_LUT[256] = {
+    0x00, 0x80, 0x40, 0xC0, 0x20, 0xA0, 0x60, 0xE0, 0x10, 0x90, 0x50, 0xD0, 0x30, 0xB0, 0x70, 0xF0, 0x08, 0x88, 0x48,
+    0xC8, 0x28, 0xA8, 0x68, 0xE8, 0x18, 0x98, 0x58, 0xD8, 0x38, 0xB8, 0x78, 0xF8, 0x04, 0x84, 0x44, 0xC4, 0x24, 0xA4,
+    0x64, 0xE4, 0x14, 0x94, 0x54, 0xD4, 0x34, 0xB4, 0x74, 0xF4, 0x0C, 0x8C, 0x4C, 0xCC, 0x2C, 0xAC, 0x6C, 0xEC, 0x1C,
+    0x9C, 0x5C, 0xDC, 0x3C, 0xBC, 0x7C, 0xFC, 0x02, 0x82, 0x42, 0xC2, 0x22, 0xA2, 0x62, 0xE2, 0x12, 0x92, 0x52, 0xD2,
+    0x32, 0xB2, 0x72, 0xF2, 0x0A, 0x8A, 0x4A, 0xCA, 0x2A, 0xAA, 0x6A, 0xEA, 0x1A, 0x9A, 0x5A, 0xDA, 0x3A, 0xBA, 0x7A,
+    0xFA, 0x06, 0x86, 0x46, 0xC6, 0x26, 0xA6, 0x66, 0xE6, 0x16, 0x96, 0x56, 0xD6, 0x36, 0xB6, 0x76, 0xF6, 0x0E, 0x8E,
+    0x4E, 0xCE, 0x2E, 0xAE, 0x6E, 0xEE, 0x1E, 0x9E, 0x5E, 0xDE, 0x3E, 0xBE, 0x7E, 0xFE, 0x01, 0x81, 0x41, 0xC1, 0x21,
+    0xA1, 0x61, 0xE1, 0x11, 0x91, 0x51, 0xD1, 0x31, 0xB1, 0x71, 0xF1, 0x09, 0x89, 0x49, 0xC9, 0x29, 0xA9, 0x69, 0xE9,
+    0x19, 0x99, 0x59, 0xD9, 0x39, 0xB9, 0x79, 0xF9, 0x05, 0x85, 0x45, 0xC5, 0x25, 0xA5, 0x65, 0xE5, 0x15, 0x95, 0x55,
+    0xD5, 0x35, 0xB5, 0x75, 0xF5, 0x0D, 0x8D, 0x4D, 0xCD, 0x2D, 0xAD, 0x6D, 0xED, 0x1D, 0x9D, 0x5D, 0xDD, 0x3D, 0xBD,
+    0x7D, 0xFD, 0x03, 0x83, 0x43, 0xC3, 0x23, 0xA3, 0x63, 0xE3, 0x13, 0x93, 0x53, 0xD3, 0x33, 0xB3, 0x73, 0xF3, 0x0B,
+    0x8B, 0x4B, 0xCB, 0x2B, 0xAB, 0x6B, 0xEB, 0x1B, 0x9B, 0x5B, 0xDB, 0x3B, 0xBB, 0x7B, 0xFB, 0x07, 0x87, 0x47, 0xC7,
+    0x27, 0xA7, 0x67, 0xE7, 0x17, 0x97, 0x57, 0xD7, 0x37, 0xB7, 0x77, 0xF7, 0x0F, 0x8F, 0x4F, 0xCF, 0x2F, 0xAF, 0x6F,
+    0xEF, 0x1F, 0x9F, 0x5F, 0xDF, 0x3F, 0xBF, 0x7F, 0xFF};
+
+alignas(32) static const int32_t LEFT_SHIFT_TABLE[8][8] = {
+    {0, 1, 2, 3, 4, 5, 6, 7}, {7, 0, 1, 2, 3, 4, 5, 6}, {7, 7, 0, 1, 2, 3, 4, 5}, {7, 7, 7, 0, 1, 2, 3, 4},
+    {7, 7, 7, 7, 0, 1, 2, 3}, {7, 7, 7, 7, 7, 0, 1, 2}, {7, 7, 7, 7, 7, 7, 0, 1}, {7, 7, 7, 7, 7, 7, 7, 0}};
+
+alignas(32) static const int32_t RIGHT_SHIFT_TABLE[8][8] = {
+    {7, 6, 5, 4, 3, 2, 1, 0}, {6, 5, 4, 3, 2, 1, 0, 7}, {5, 4, 3, 2, 1, 0, 7, 7}, {4, 3, 2, 1, 0, 7, 7, 7},
+    {3, 2, 1, 0, 7, 7, 7, 7}, {2, 1, 0, 7, 7, 7, 7, 7}, {1, 0, 7, 7, 7, 7, 7, 7}, {0, 7, 7, 7, 7, 7, 7, 7}};
+alignas(32) static const int32_t SHUFFLE_TABLE[8][8] = {
+    {0, 1, 2, 3, 4, 5, 6, 7}, {1, 2, 3, 4, 5, 6, 7, 0}, {2, 3, 4, 5, 6, 7, 0, 1}, {3, 4, 5, 6, 7, 0, 1, 2},
+    {4, 5, 6, 7, 0, 1, 2, 3}, {5, 6, 7, 0, 1, 2, 3, 4}, {6, 7, 0, 1, 2, 3, 4, 5}, {7, 0, 1, 2, 3, 4, 5, 6}};
+
+void _mm256_load_char_array_forward(__m256i& vec_index, const char* arr, __m256i& seq_vals, __mmask8 mask) {
+    // print_m256i_epi32(vec_index, "vec_index");
+    __mmask8 copy_mask = mask;
+    uint32_t lowbit = copy_mask & (-copy_mask);
+    int pos = _mm_popcnt_u32(lowbit - 1);
+    __m256i shuffle_perm = _mm256_load_si256((__m256i*)SHUFFLE_TABLE[pos]);
+    vec_index = seq_vals = _mm256_permutevar8x32_epi32(vec_index, shuffle_perm);
+    int base_index = _mm256_extract_epi32(vec_index, 0);
+    // printf("base_index = %d\n", base_index);
+    copy_mask >>= pos;
+    __mmask16 mask_16 = copy_mask;
+    __m128i bytes = _mm_maskz_loadu_epi8(mask_16, arr + base_index);
+    seq_vals = _mm256_cvtepu8_epi32(bytes);
+    __m256i perm = _mm256_load_si256((__m256i*)LEFT_SHIFT_TABLE[pos]);
+    seq_vals = _mm256_permutevar8x32_epi32(seq_vals, perm);
+    seq_vals = _mm256_maskz_mov_epi32(mask, seq_vals);
+}
+
+void _mm256_load_char_array_backward(__m256i& vec_index, const char* arr, __m256i& seq_vals, __mmask8 mask) {
+    // print_m256i_epi32(vec_index, "vec_index");
+    __mmask8 reverse_mask = REVERSE_MASK_LUT[mask];
+    __mmask8 copy_mask = reverse_mask;
+    uint32_t lowbit = copy_mask & (-copy_mask);
+    int pos = _mm_popcnt_u32(lowbit - 1);
+    __m256i shuffle_perm = _mm256_load_si256((__m256i*)SHUFFLE_TABLE[7 - pos]);
+    vec_index = seq_vals = _mm256_permutevar8x32_epi32(vec_index, shuffle_perm);
+    int base_index = _mm256_extract_epi32(vec_index, 0);
+    // printf("base_index = %d\n", base_index);
+    copy_mask >>= pos;
+    __mmask16 mask_16 = copy_mask;
+    __m128i bytes = _mm_maskz_loadu_epi8(mask_16, arr + base_index);
+
+    seq_vals = _mm256_cvtepu8_epi32(bytes);
+    __m256i perm = _mm256_load_si256((__m256i*)RIGHT_SHIFT_TABLE[pos]);
+    seq_vals = _mm256_permutevar8x32_epi32(seq_vals, perm);
+    seq_vals = _mm256_maskz_mov_epi32(mask, seq_vals);
 }
 
 int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix& mat, int& best_score,
@@ -1266,24 +1331,66 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
             if (count == 0) continue;
 
             // printf(" (0x%02X)\n", (unsigned int)mask);
-            __m512i vec_i_minus_1 = _mm512_sub_epi64(vec_i, vec_1);
+            // __m512i vec_i_minus_1 = _mm512_sub_epi64(vec_i, vec_1);
 
-            __m512i vec_j_minus_1 = _mm512_sub_epi64(vec_j, vec_1);
+            // __m512i vec_j_minus_1 = _mm512_sub_epi64(vec_j, vec_1);
 
-            vec_i_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_i_minus_1);
-            vec_j_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_j_minus_1);
+            // vec_i_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_i_minus_1);
+            // vec_j_minus_1 = _mm512_mask_blend_epi64(mask, vec_0, vec_j_minus_1);
 
-            __m256i vec_i_index = _mm512_cvtepi64_epi32(vec_i_minus_1);
-            __m256i vec_j_index = _mm512_cvtepi64_epi32(vec_j_minus_1);
+            // __m256i vec_i_index = _mm512_cvtepi64_epi32(vec_i_minus_1);
+            // __m256i vec_j_index = _mm512_cvtepi64_epi32(vec_j_minus_1);
 
-            __m256i seq1_i32 =
-                _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(), mask, vec_i_index, (const int*)iseq1, 1);
+            // __m256i seq1_i32 =
+            //     _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(), mask, vec_i_index, (const int*)iseq1, 1);
 
-            __m256i seq2_i32 =
-                _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(), mask, vec_j_index, (const int*)iseq2, 1);
+            // __m256i seq2_i32 =
+            //     _mm256_mmask_i32gather_epi32(_mm256_setzero_si256(), mask, vec_j_index, (const int*)iseq2, 1);
+            // __m256i seq1_vals = _mm256_and_si256(seq1_i32, _mm256_set1_epi32(0xFF));
+            // __m256i seq2_vals = _mm256_and_si256(seq2_i32, _mm256_set1_epi32(0xFF));
 
-            __m256i seq1_vals = _mm256_and_si256(seq1_i32, _mm256_set1_epi32(0xFF));
-            __m256i seq2_vals = _mm256_and_si256(seq2_i32, _mm256_set1_epi32(0xFF));
+            __m512i vec_i64_index = _mm512_sub_epi64(vec_i, vec_1);
+            __m512i vec_j64_index = _mm512_sub_epi64(vec_j, vec_1);
+            __m256i vec_i_index = _mm512_cvtepi64_epi32(vec_i64_index);
+            __m256i vec_j_index = _mm512_cvtepi64_epi32(vec_j64_index);
+            // _mm512_store_epi64(i_arr, vec_i_index);
+            // _mm512_store_epi64(j_arr, vec_j_index);
+
+            // printf("(%d)(0x%02X)\n", y, (unsigned int)mask);
+            __m256i seq1_vals, seq2_vals;
+            _mm256_load_char_array_backward(vec_i_index, iseq1, seq1_vals, mask);
+            _mm256_load_char_array_forward(vec_j_index, iseq2, seq2_vals, mask);
+
+            // __mmask8 copy_mask = mask;
+            // uint32_t lowbit = copy_mask & (-copy_mask);
+            // int pos = _mm_popcnt_u32(lowbit - 1);
+            // int base_index = j_arr[pos];
+            // copy_mask >>= pos;
+            // __mmask16 mask_16 = copy_mask;
+            // __m128i bytes = _mm_maskz_loadu_epi8(mask_16, iseq2 + base_index);
+            // __m256i seq2_vals = _mm256_cvtepu8_epi32(bytes);
+            // __m256i perm = _mm256_load_si256((__m256i*)LEFT_SHIFT_TABLE[pos]);
+            // seq2_vals = _mm256_permutevar8x32_epi32(seq2_vals, perm);
+            // seq2_vals = _mm256_maskz_mov_epi32(mask, seq2_vals);
+
+            // __mmask8 reverse_mask = REVERSE_MASK_LUT[mask];
+            // copy_mask = reverse_mask;
+            // // printf("(0x%02X)\n", (unsigned int)copy_mask);
+            // // print_m512i_epi64(vec_index, "vec_index");
+            // lowbit = copy_mask & (-copy_mask);
+            // pos = _mm_popcnt_u32(lowbit - 1);
+            // base_index = i_arr[7 - pos];
+            // copy_mask >>= pos;
+            // // printf("(0x%02X)\n", (unsigned int)copy_mask);
+            // // printf("[%d]\n", base_index);
+            // mask_16 = copy_mask;
+            // bytes = _mm_maskz_loadu_epi8(mask_16, iseq1 + base_index);
+
+            // __m256i seq1_vals = _mm256_cvtepu8_epi32(bytes);
+            // perm = _mm256_load_si256((__m256i*)RIGHT_SHIFT_TABLE[pos]);
+            // seq1_vals = _mm256_permutevar8x32_epi32(seq1_vals, perm);
+            // // seq_vals = _mm256_permutevar8x32_epi32(seq_vals, _mm256_set_epi32(0, 1, 2, 3, 4, 5, 6, 7));
+            // seq1_vals = _mm256_maskz_mov_epi32(mask, seq1_vals);
 
             __m256i matrix_indices = _mm256_mullo_epi32(seq1_vals, _mm256_set1_epi32(MAX_AA));
             matrix_indices = _mm256_add_epi32(matrix_indices, seq2_vals);
@@ -1371,7 +1478,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
             _mm512_mask_storeu_epi64(&score_mat[index_y][index_x], mask, vec_best_score1);
             _mm256_mask_storeu_epi32((__m256i*)&back_mat[index_y][index_x], mask, vec_back);
         }
-        // // if(y <= kmax - 20) continue;
+        // if (y >= kmin + 3) exit(0);
         // for(int x=L+(abs(y+L))%2;x<=R;x+=2){
         // 	// avx<<score_mat[y-kmin][(x-L+1)>>1]<<" ";
         // 	cout << score_mat[y-kmin][(x-L+1)>>1]<<" ";
@@ -1391,7 +1498,7 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
     // printf("\n(%d,%d)\n", i, j);
     best_score = score_mat[y - kmin][(x - L + 1) >> 1];
     best_score1 = score_mat[y - kmin][(x - L + 1) >> 1];
-    // printf("%2li(%2i) ", best_score1, iden_no1);
+    printf("%2li(%2i) ", best_score1, iden_no1);
 
     int back = back_mat[y - kmin][(x - L + 1) >> 1];
     int last = back;
@@ -2817,8 +2924,9 @@ int main(int argc, char* argv[]) {
 #ifdef __AVX512F__
 #if !defined(ORIGIN) && !defined(COMPACT) && !defined(ROTATION)
     cout << "\n<Method Info> AVX512 Band Align" << endl;
-    rc = rotation_band_align_AVX512(seq1, seq2, len1, len2, mat, best_score, tiden_no, alnln, distance, talign_info,
-                                    band_left, band_center, band_right, buffer);
+    for (int i = 1; i <= 1; i++)
+        rc = rotation_band_align_AVX512(seq1, seq2, len1, len2, mat, best_score, tiden_no, alnln, distance, talign_info,
+                                        band_left, band_center, band_right, buffer);
 #endif
 #endif
 
