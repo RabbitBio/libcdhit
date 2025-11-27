@@ -16,6 +16,7 @@ using Clock = std::chrono::steady_clock;
 #define NAA1 21
 #define MAX_SEQ 655360
 #define MAX_AA 23
+#define MAX_AA_2 529
 #define NAA2 (NAA1 * NAA1) // 二元对的总数
 #define MAX_DIAG (MAX_SEQ << 1)
 #define FAILED_FUNC 1
@@ -1275,6 +1276,12 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
     __m512i vec_ext_gap = _mm512_set1_epi64(mat.ext_gap);
     __m512i vec_gap_open = _mm512_set1_epi64(mat.gap);
 
+    size_t mat_size = MAX_AA_2;
+    char* base = (char*)mat.flat_matrix;
+    for (size_t offset = 0; offset < mat_size; offset += 64) {
+        _mm_prefetch(base + offset, _MM_HINT_T0);
+    }
+
     // ============ 主循环 ============
     for (int y = kmin + 1; y <= kmax; y++) {
         int offset = (abs(y + L)) % 2;
@@ -1289,6 +1296,12 @@ int rotation_band_align_AVX512(char iseq1[], char iseq2[], int len1, int len2, S
         int index_y = y - kmin;
         int index_y1 = y - 1 - kmin;
         int index_y2 = y - 2 - kmin;
+
+        // size_t mat_size = MAX_AA_2;
+        // char* base = (char*)mat.flat_matrix;
+        // for (size_t offset = 0; offset < mat_size; offset += 64) {
+        //     _mm_prefetch(base + offset, _MM_HINT_T0);
+        // }
 
         if (y + 1 <= kmax) {
             _mm_prefetch((const char*)&score_mat[y + 1 - kmin][0], _MM_HINT_T0);
