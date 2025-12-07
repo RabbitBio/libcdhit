@@ -1,3 +1,6 @@
 [submodule "thirdparty/ips4o"]
 	path = thirdparty/ips4o
 	url = git@github.com:ips4o/ips4o.git
+[submodule "thirdparty/ips2ra"]
+	path = thirdparty/ips2ra
+	url = git@github.com:ips4o/ips2ra.git
