@@ -62,7 +62,7 @@ void ips2ra_sort_multi_thread(vector<Data>& hash_vec, const int r = 1) {
 }
 
 int main(int argc, char** argv) {
-    size_t N = 1000000;
+    size_t N = 10000000;
     int R = 3;
     uint32_t seed = 123;
     bool run_std = false;
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
 #endif
 
     if (!(run_std || run_seq
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
           || run_par
 #endif
           )) {
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
         uint64_t total_time = 0;
         printf("--------------------------------\n");
         for (int i = 0; i < R; i++) {
-            std::vector<Data> v = hash_vec; // 每次复制原始数据
+            std::vector<Data> v = hash_vec;
 
             auto t0 = Clock::now();
             sorter(v, vector_size);
@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
         run_case("ips2ra::sort", ips2ra_sort_single_thread);
     }
 
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
     if (run_par) {
         run_case("ips4o::parallel::sort", ips4o_sort_multi_thread);
         run_case("ips2ra::parallel::sort", ips2ra_sort_multi_thread);

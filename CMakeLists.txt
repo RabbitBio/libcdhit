@@ -25,6 +25,7 @@ add_subdirectory(thirdparty/ips2ra ips2ra-build)
 # src 中两个测试脚本
 add_executable(bench_ips4o src/ips4o.cpp)
 add_executable(bench_ips2ra src/ips2ra.cpp)
+add_executable(bench_main src/main.cpp)
 
 # 公共包含目录（例如 include/ 里有 CLI.hpp）
 target_include_directories(bench_ips4o PRIVATE
@@ -33,22 +34,28 @@ target_include_directories(bench_ips4o PRIVATE
 target_include_directories(bench_ips2ra PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_include_directories(bench_main PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
 # 分别链接各自的库（由上面的 add_subdirectory 提供）
 target_link_libraries(bench_ips4o PRIVATE ips4o)
 target_link_libraries(bench_ips2ra PRIVATE ips2ra)
+target_link_libraries(bench_main PRIVATE ips4o ips2ra)
 
 # --- 并行与依赖（可选） ---
 if(ENABLE_PARALLEL)
   # 仅对 ips4o 测试启用该宏（若代码需要）
-  target_compile_definitions(bench_ips4o PRIVATE USE_IPS4O_PARALLEL)
-  target_compile_definitions(bench_ips2ra PRIVATE USE_IPS4O_PARALLEL)
+  target_compile_definitions(bench_ips4o PRIVATE USE_PARALLEL)
+  target_compile_definitions(bench_ips2ra PRIVATE USE_PARALLEL)
+  target_compile_definitions(bench_main PRIVATE USE_PARALLEL)
 
   # 如系统已安装 TBB，尝试链接（两者都给，找不到也没关系）
   find_package(TBB QUIET)
   if(TBB_FOUND)
     target_link_libraries(bench_ips4o PRIVATE TBB::tbb)
     target_link_libraries(bench_ips2ra PRIVATE TBB::tbb)
+    target_link_libraries(bench_main PRIVATE TBB::tbb)
   endif()
 endif()
 
@@ -57,6 +64,7 @@ if(ENABLE_OPENMP)
   if(OpenMP_CXX_FOUND)
     target_link_libraries(bench_ips4o PRIVATE OpenMP::OpenMP_CXX)
     target_link_libraries(bench_ips2ra PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(bench_main PRIVATE OpenMP::OpenMP_CXX)
   endif()
 endif()
 
@@ -65,9 +73,11 @@ if(OPTIMIZE_NATIVE)
   if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(bench_ips4o PRIVATE -O3 -DNDEBUG -march=native)
     target_compile_options(bench_ips2ra PRIVATE -O3 -DNDEBUG -march=native)
+    target_compile_options(bench_main PRIVATE -O3 -DNDEBUG -march=native)
   elseif(MSVC)
     target_compile_options(bench_ips4o PRIVATE /O2)
     target_compile_options(bench_ips2ra PRIVATE /O2)
+    target_compile_options(bench_main PRIVATE /O2)
   endif()
 endif()
 
@@ -76,5 +86,6 @@ if(LINK_ATOMIC)
   if(UNIX AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_libraries(bench_ips4o PRIVATE atomic)
     target_link_libraries(bench_ips2ra PRIVATE atomic)
+    target_link_libraries(bench_main PRIVATE atomic)
   endif()
 endif()

@@ -11,8 +11,8 @@
 #include <omp.h>
 #endif
 
-#include "ips2ra.hpp"
 #include "CLI11.hpp"
+#include "ips2ra.hpp"
 
 using Clock = std::chrono::high_resolution_clock;
 
@@ -21,18 +21,17 @@ struct Record {
     uint64_t value;
 };
 
-template<class SortFn>
+template <class SortFn>
 long long operate_once(const std::vector<Record>& base, SortFn fn, const char* name) {
     std::vector<Record> v = base;
     auto t0 = Clock::now();
     fn(v.begin(), v.end());
     auto t1 = Clock::now();
 
-	if (!std::is_sorted(v.begin(), v.end(),
-			[](const Record& a, const Record& b){ return a.value < b.value; })) {
-		std::cerr << "[Error] " << name << " result is not sorted!\n";
-		std::exit(1);
-	}
+    if (!std::is_sorted(v.begin(), v.end(), [](const Record& a, const Record& b) { return a.value < b.value; })) {
+        std::cerr << "[Error] " << name << " result is not sorted!\n";
+        std::exit(1);
+    }
 
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     std::cout << "[Info] " << name << " sorted time is [ " << ms << " ] ms\n";
@@ -55,7 +54,7 @@ int main(int argc, char** argv) {
     app.add_option("-s,--seed", seed, "随机种子");
     app.add_flag("--std", run_std, "运行 std::sort");
     app.add_flag("--seq", run_seq, "运行 ips2ra::sort（顺序）");
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
     app.add_flag("--par", run_par, "运行 ips2ra::parallel::sort（并行）");
     app.add_option("-t,--threads", threads, "线程数");
 #endif
@@ -65,14 +64,14 @@ int main(int argc, char** argv) {
 #ifdef _OPENMP
     omp_set_dynamic(0);                 // 固定线程数，禁用动态调整
     omp_set_max_active_levels(1);       // 禁止嵌套并行导致的超额并发（可选）
-    omp_set_num_threads((int)threads);  // 例如 threads=8
+    omp_set_num_threads((int) threads); // 例如 threads=8
 #endif
 
     if (!(run_std || run_seq
-#ifdef USE_IPS4O_PARALLEL
-        || run_par
+#ifdef USE_PARALLEL
+          || run_par
 #endif
-    )) {
+          )) {
         run_std = true;
         run_seq = true;
     }
@@ -87,7 +86,7 @@ int main(int argc, char** argv) {
     }
 
     // 比较器（用于 std::sort）
-    auto cmp_asc  = [](const Record& a, const Record& b) { return a.value < b.value; };
+    auto cmp_asc = [](const Record& a, const Record& b) { return a.value < b.value; };
     auto cmp_desc = [](const Record& a, const Record& b) { return a.value > b.value; };
     auto cmp = descending ? cmp_desc : cmp_asc;
 
@@ -97,22 +96,24 @@ int main(int argc, char** argv) {
             best = std::min(best, operate_once(base, sorter, name));
         }
         std::cout << "[Info] " << name << " best sort time is " << best << " ms .\n";
-        std::cout << "[Info] Avg time is " << (double)best / N * 1e6 << " ns/elem .\n\n";
+        std::cout << "[Info] Avg time is " << (double) best / N * 1e6 << " ns/elem .\n\n";
     };
 
     if (run_std) {
         run_case("std::sort", [&](auto b, auto e) {
-            if (descending) std::sort(b, e, cmp_desc);
-            else            std::sort(b, e, cmp_asc);
+            if (descending)
+                std::sort(b, e, cmp_desc);
+            else
+                std::sort(b, e, cmp_asc);
         });
     }
     if (run_seq) {
         run_case("ips2ra::sort", [&](auto b, auto e) {
             ips2ra::sort(b, e, [](const Record& r) { return r.value; });
-            if (descending) std::reverse(b, e);  // ips2ra 不支持比较器，降序需手动反转
+            if (descending) std::reverse(b, e); // ips2ra 不支持比较器，降序需手动反转
         });
     }
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
     if (run_par) {
         run_case("ips2ra::parallel::sort", [&](auto b, auto e) {
             ips2ra::parallel::sort(b, e, [](const Record& r) { return r.value; });

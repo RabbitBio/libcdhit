@@ -11,8 +11,8 @@
 #include <omp.h>
 #endif
 
-#include "ips4o.hpp"
 #include "CLI11.hpp"
+#include "ips4o.hpp"
 
 using Clock = std::chrono::high_resolution_clock;
 
@@ -27,7 +27,7 @@ struct Record {
 // ----------------------
 // 测试函数
 // ----------------------
-template<class SortFn>
+template <class SortFn>
 long long operate_once(const std::vector<Record>& base, SortFn fn, const char* name) {
     std::vector<Record> v = base;
     auto t0 = Clock::now();
@@ -35,9 +35,7 @@ long long operate_once(const std::vector<Record>& base, SortFn fn, const char* n
     auto t1 = Clock::now();
 
     // 检查是否按 value 排序正确
-    if (!std::is_sorted(v.begin(), v.end(), [](const Record& a, const Record& b) {
-        return a.value < b.value;
-    })) {
+    if (!std::is_sorted(v.begin(), v.end(), [](const Record& a, const Record& b) { return a.value < b.value; })) {
         std::cerr << "[Error] " << name << " result is not sorted!\n";
         std::exit(1);
     }
@@ -56,6 +54,7 @@ int main(int argc, char** argv) {
     bool run_par = false;
     bool descending = false;
     size_t threads = 1;
+    uint32_t num = 1;
 
     CLI::App app{"IPS4o Struct Sort Benchmark"};
     app.add_option("-n,--size", N, "元素个数")->check(CLI::PositiveNumber);
@@ -63,7 +62,7 @@ int main(int argc, char** argv) {
     app.add_option("-s,--seed", seed, "随机种子");
     app.add_flag("--std", run_std, "运行 std::sort");
     app.add_flag("--seq", run_seq, "运行 ips4o::sort（顺序）");
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
     app.add_flag("--par", run_par, "运行 ips4o::parallel::sort（并行）");
     app.add_option("-t,--threads", threads, "线程数");
 #endif
@@ -71,16 +70,16 @@ int main(int argc, char** argv) {
     CLI11_PARSE(app, argc, argv);
 
 #ifdef _OPENMP
-    omp_set_dynamic(0);                 // 固定线程数
-    omp_set_max_active_levels(1);       // 禁止嵌套并行
-    omp_set_num_threads((int)threads);
+    omp_set_dynamic(0);           // 固定线程数
+    omp_set_max_active_levels(1); // 禁止嵌套并行
+    omp_set_num_threads((int) threads);
 #endif
 
     if (!(run_std || run_seq
-#ifdef USE_IPS4O_PARALLEL
-        || run_par
+#ifdef USE_PARALLEL
+          || run_par
 #endif
-    )) {
+          )) {
         run_std = true;
         run_seq = true;
     }
@@ -95,7 +94,7 @@ int main(int argc, char** argv) {
     }
 
     // 比较器：基于 value 排序
-    auto cmp_asc  = [](const Record& a, const Record& b) { return a.value < b.value; };
+    auto cmp_asc = [](const Record& a, const Record& b) { return a.value < b.value; };
     auto cmp_desc = [](const Record& a, const Record& b) { return a.value > b.value; };
     auto cmp = descending ? cmp_desc : cmp_asc;
 
@@ -105,13 +104,15 @@ int main(int argc, char** argv) {
             best = std::min(best, operate_once(base, sorter, name));
         }
         std::cout << "[Info] " << name << " best sort time is " << best << " ms .\n";
-        std::cout << "[Info] Avg time is " << (double)best / N * 1e6 << " ns/elem .\n\n";
+        std::cout << "[Info] Avg time is " << (double) best / N * 1e6 << " ns/elem .\n\n";
     };
 
     if (run_std) {
         run_case("std::sort", [&](auto b, auto e) {
-            if (descending) std::sort(b, e, cmp_desc);
-            else            std::sort(b, e, cmp_asc);
+            if (descending)
+                std::sort(b, e, cmp_desc);
+            else
+                std::sort(b, e, cmp_asc);
         });
     }
     if (run_seq) {
@@ -122,7 +123,7 @@ int main(int argc, char** argv) {
                 ips4o::sort(b, e, cmp_asc);
         });
     }
-#ifdef USE_IPS4O_PARALLEL
+#ifdef USE_PARALLEL
     if (run_par) {
         run_case("ips4o::parallel::sort", [&](auto b, auto e) {
             if (descending)
