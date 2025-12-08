@@ -1,3 +1,5 @@
+#include <tbb/global_control.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -82,11 +84,7 @@ int main(int argc, char** argv) {
     app.add_option("-t,--threads", threads, "线程数");
     CLI11_PARSE(app, argc, argv);
 
-#ifdef _OPENMP
-    omp_set_dynamic(0);           // 固定线程数
-    omp_set_max_active_levels(1); // 禁止嵌套并行
-    omp_set_num_threads((int) threads);
-#endif
+    tbb::global_control(tbb::global_control::max_allowed_parallelism, threads);
 
     if (!(run_std || run_seq
 #ifdef USE_PARALLEL
