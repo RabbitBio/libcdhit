@@ -37,11 +37,7 @@ endif()
 
 # --- 编译优化（不想改全局 CFLAGS 的就只对目标加） ---
 if(OPTIMIZE_NATIVE)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(bench_main PRIVATE -O3 -DNDEBUG -march=native)
-  elseif(MSVC)
-    target_compile_options(bench_main PRIVATE /O2)
-  endif()
+  target_compile_options(bench_main PRIVATE -O3 -DNDEBUG -march=native)
 endif()
 
 # --- 部分平台需要手动链接 libatomic（只在报错时开） ---
