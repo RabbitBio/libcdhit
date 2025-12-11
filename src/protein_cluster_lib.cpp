@@ -103,7 +103,8 @@ int EncodeWords(const Sequence_new &seq, vector<int> &word_encodes, vector<int> 
 
 // Jaccard 计算
 static inline double jaccard_from_CAB(int C, int A, int B) {
-	int denom = A + B - C;
+   	//int denom = A + B - C;
+    int denom = A > B ? B : A;
 	return denom > 0 ? double(C) / double(denom) : 0.0;
 }
 // 仅统计 id<qid（行按 seq_id 升序存储，遇到 >=qid 早停）
@@ -829,26 +830,36 @@ void CountWeightedJaccard_SoA(
     size_t idx_i = 0,idx_j = 0;
     const size_t len_i = seqi.size(),len_j = seqj.size();
     long long inter_val = 0,union_val = 0;
+    int A_val = 0;
+    int B_val = 0;
     while(idx_i<len_i && idx_j<len_j){
         if(seqi[idx_i]==seqj[idx_j]){
             const int a = counti[idx_i];
             const int b = countj[idx_j];
             inter_val+=std::min(a,b);
-            union_val+=a+b;
+            A_val += a;
+            B_val += b;
+            //union_val+=a+b;
             idx_i++,idx_j++;
         }
         else if(seqi[idx_i]<seqj[idx_j]){
-            union_val+=counti[idx_i];
+            //union_val+=counti[idx_i];
+            A_val+=counti[idx_i];
+            B_val+=counti[idx_i];
             idx_i++;
         }
         else{
-            union_val+=countj[idx_j];
+            A_val+=countj[idx_j];
+            B_val+=countj[idx_j];
             idx_j++;
         }
     }
-    while(idx_i<len_i) union_val+=counti[idx_i++];
-    while(idx_j<len_j) union_val+=countj[idx_j++];
-    union_val -= inter_val;
+    //while(idx_i<len_i) union_val+=counti[idx_i++];
+    //while(idx_j<len_j) union_val+=countj[idx_j++];
+    while(idx_i<len_i) A_val+=counti[idx_i++];
+    while(idx_j<len_j) B_val+=countj[idx_j++];
+    //union_val -= inter_val;
+    union_val = A_val > B_val ? B_val : A_val;
     jac = (union_val!=0)? static_cast<double>(inter_val) / static_cast<double>(union_val) : 0.0;
 	// cout<<jac<<endl;
 }
@@ -973,7 +984,8 @@ void u32_WeightedJaccard_vetcor_AVX512(
     if (n < 16 || m < 16) {
         // 标量尾
         inter_val += u32_weighted_jaccard_scalar_tail(ka, fa, n, kb, fb, m);
-        const int64_t uni = (sumA + sumB) - inter_val;
+        //const int64_t uni = (sumA + sumB) - inter_val;
+        const int64_t uni = sumA > sumB ? sumB : sumA;
         jac = (uni==0) ? 0.0 : double(inter_val)/double(uni);
         return;
     }
@@ -1112,8 +1124,11 @@ void u32_WeightedJaccard_vector_AVX2(
     }
     assert(n==freqA.size()&&m==freqB.size());
     int union_val = 0;
-    for(auto v: freqA) union_val+=v;
-    for(auto v: freqB) union_val+=v;
+    int A_val = 0;
+    int B_val = 0;
+    for(auto v: freqA) A_val+=v;
+    for(auto v: freqB) B_val+=v;
+    union_val = A_val > B_val ? B_val : A_val;
 
     const int* ka = keysA.data();
     const int* kb = keysB.data();
@@ -1126,7 +1141,7 @@ void u32_WeightedJaccard_vector_AVX2(
     int inter_val = 0;
     if(n<8 || m<8){   
         inter_val = u32_weighted_jaccard_scalar_tail(ka,fa,n,kb,fb,m);
-        union_val -= inter_val;
+        //union_val -= inter_val;
         jac = (union_val == 0)? 0.0 : (double)inter_val/(double) union_val;
 		// cout<<jac<<endl;
         return;
@@ -1208,7 +1223,7 @@ void u32_WeightedJaccard_vector_AVX2(
     if(ia<n && ib<m){
         inter_val += u32_weighted_jaccard_scalar_tail(ka+ia,fa+ia,n-ia,kb+ib,fb+ib,m-ib);
     }
-    union_val -= inter_val;
+    // union_val -= inter_val;
     jac = (union_val==0) ? 0.0 : (double)inter_val/(double)union_val;
 	// cout<<jac<<endl;
 }
