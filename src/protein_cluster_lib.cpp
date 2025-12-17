@@ -103,7 +103,7 @@ int EncodeWords(const Sequence_new &seq, vector<int> &word_encodes, vector<int> 
 
 // Jaccard 计算
 static inline double jaccard_from_CAB(int C, int A, int B) {
-   	//int denom = A + B - C;
+	//int denom = A + B - C;
     int denom = A > B ? B : A;
 	return denom > 0 ? double(C) / double(denom) : 0.0;
 }
@@ -217,7 +217,9 @@ void precompute_edges_jaccard(
 		std::vector<std::vector<std::pair<int,int>>>& word_table,
 		int kmer_size, double tau,
 		DSU& global_dsu,// 输出：全局 DSU
-		int nthreads
+		int nthreads,
+        uint64_t cross_group_edges,
+        uint64_t validated_edges
 		)
 {
 	const int N = (int)seqs.size();
@@ -253,7 +255,7 @@ void precompute_edges_jaccard(
 		std::vector<std::pair<int,int>> out_pairs;              // 线程私有
 
 
-#pragma omp for schedule(dynamic,1)
+#pragma omp for schedule(dynamic,1) reduction(+:cross_group_edges,validated_edges)
 		for (int i = 0; i < N; ++i) {
 			if (A[i] <= 0) { 
 				//++progress; 
@@ -270,6 +272,8 @@ void precompute_edges_jaccard(
 				int C = pr.second;
 				double jac = jaccard_from_CAB(C, A[i], A[j]);
 				if (jac >= tau) {
+                    if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+                    validated_edges++;
 					thread_dsu[tid].unite(i, j); // 线程本地 unite
 				}
 			}
@@ -304,7 +308,7 @@ void precompute_edges_jaccard(
 
 
 // 主函数实现
-void cluster_sequences(
+pair<uint64_t, uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
@@ -409,7 +413,9 @@ void cluster_sequences(
 
 	//DSU dsu(seqs.size());
 	DSU dsu;
-	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads);
+    pair<uint64_t, uint64_t> edge_stat = {0, 0}; 
+    uint64_t cross_group_edges, validated_edges;
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, cross_group_edges, validated_edges);
 
 	double t4 = get_time();
 	
@@ -425,6 +431,7 @@ void cluster_sequences(
 	//std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
 	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
+    return {cross_group_edges, validated_edges};
 }
 
 void cluster_sequences_st_old(
@@ -519,11 +526,14 @@ void cluster_sequences_st_old(
 	}
 
 }
-void cluster_sequences_st(
+pair<uint64_t, uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau)
 {
+    // test edge cnt
+    uint64_t cross_group_edges = 0;
+    uint64_t validated_edges = 0;
 	InitNAA(MAX_UAA); // TODO: 可外移
 	//init_aa_map();    // TODO: 可外移
 
@@ -605,6 +615,8 @@ void cluster_sequences_st(
 			const int C = pr.second;
 			const double jac = jaccard_from_CAB(C, A[i], A[j]);
 			if (jac >= tau) {
+                if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+                validated_edges++;
 				dsu.unite(i, j);
 			}
 		}
@@ -614,6 +626,7 @@ void cluster_sequences_st(
 	for (int i = 0; i < N; ++i) {
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
+    return {cross_group_edges, validated_edges};
 }
 
 void cluster_sequences_st_reuse(
@@ -1357,6 +1370,7 @@ void cluster_sequences_st_less10(
         int kmer_size,
         double tau
 ){
+    std::cout << "Wrong!!!!" << std::endl;
     InitNAA(MAX_UAA);
     //init_aa_map();
     int N=(int)seqs.size();
