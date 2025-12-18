@@ -100,7 +100,7 @@ int main(int argc, char* argv[])
 //	parent.resize(seqs.size());
 
 	/// init buffer
-
+	pair<int, int> res;
 	double t1 = get_time();
 	if(threads == 1)
 	{
@@ -112,13 +112,13 @@ int main(int argc, char* argv[])
 				//cluster_sequences_st_reuse(seqs, kmer_size, tau, ws);
 				cerr << "reuse version disabled!!!" << endl;
 			}else{
-				cluster_sequences_st(seqs, kmer_size, tau);
+				res = cluster_sequences_st(seqs, kmer_size, tau);
 			}
 		}
 	}else
 	{
 		
-		cluster_sequences(seqs, kmer_size, tau, threads);
+		res = cluster_sequences(seqs, kmer_size, tau, threads);
 	}
 	double t2 = get_time();
 	// 打印结果
@@ -134,6 +134,9 @@ int main(int argc, char* argv[])
 	cerr << "Clustering time: " << t2 - t1 << " s" << endl;
 	cerr << "Avg seq per second: " << (double)number_seqs / (t2 - t1) << endl;
 	cerr << "Avg time(ms) per seq: " << (t2 - t1) / (double)number_seqs * 1000 << " ms" <<  endl;
+	cerr << "cross edges: " << res.first << endl;
+	cerr << "valid edges: " << res.second << endl;
+
 
 	return 0;
 }

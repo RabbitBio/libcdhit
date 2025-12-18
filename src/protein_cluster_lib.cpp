@@ -20,6 +20,9 @@
 
 #include <immintrin.h>
 
+#include "parasail.h"
+#include "parasail/matrix_lookup.h"
+
 using namespace std;
 
 constexpr int aa_value(char c) {
@@ -600,7 +603,12 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
+	//for parasail sw
+	const parasail_matrix_t* blosum62_mat = parasail_matrix_lookup("blosum62"); // 内置
 
+	int filter_edge = 0;
+	int pass_edge = 0;
+	int sw_edge = 0;
 	for (int i = 0; i < N; ++i) {
 		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
 
@@ -617,10 +625,28 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 			if (jac >= tau) {
                 if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                 validated_edges++;
-				dsu.unite(i, j);
+			
+				float sw_sim = 1.0;
+				if(jac < 0.7)
+				{
+					sw_edge++;
+    				parasail_result_t* r = parasail_sw_stats(seqs[i].data, seqs[i].length, seqs[j].data, seqs[j].length, 11, 1, blosum62_mat);
+					//sw_sim = (float)parasail_result_get_matches(r)/parasail_result_get_length(r);
+					sw_sim = (float)parasail_result_get_matches(r)/std::min(seqs[i].length, seqs[j].length);
+					if(sw_sim > 0.9) pass_edge++;
+					else filter_edge++;
+					//cout <<  "seq " << i << " and seq " << j << " jac : " << jac << " SW: " << (float)parasail_result_get_matches(r)/std::min(seqs[i].length, seqs[j].length) << endl;
+					cout <<  "seq " << i << "(len:" << seqs[i].length << ") and seq " << j << " (len: " << seqs[j].length << ") jac : " << jac << " SW: " << sw_sim << " matches: " << parasail_result_get_matches(r) << " aln len: " << parasail_result_get_length(r) << endl;
+				}
+				if(sw_sim > 0.9)
+					dsu.unite(i, j);
 			}
 		}
 	}
+
+	std::cout << "sw edges: " << sw_edge << std::endl;
+	std::cout << "pass edges: " << pass_edge << std::endl;
+	std::cout << "filter edges: " << filter_edge << std::endl;
 
 	// 写回代表元（保持与原始 seq_id 的对应）
 	for (int i = 0; i < N; ++i) {

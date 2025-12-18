@@ -3,6 +3,7 @@ project(libcdhit)
 
 find_package(OpenMP REQUIRED)
 
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -29,6 +30,23 @@ file(GLOB_RECURSE SOURCES "${SOURCE_DIR}/*.cpp")
 
 #add_library(${LIB_NAME} STATIC ${SOURCES})
 add_library(${LIB_NAME} SHARED ${SOURCES})
+
+# ---- Parasail ----
+set(PARASAIL_ROOT "" CACHE PATH "Parasail install prefix")
+
+if (PARASAIL_ROOT)
+  target_include_directories(${LIB_NAME} PUBLIC "${PARASAIL_ROOT}/include")
+
+  find_library(PARASAIL_LIBRARY
+    NAMES parasail
+    HINTS "${PARASAIL_ROOT}"
+    PATH_SUFFIXES lib lib64
+    REQUIRED
+  )
+
+  target_link_libraries(${LIB_NAME} PUBLIC "${PARASAIL_LIBRARY}")
+endif()
+
 target_link_libraries(${LIB_NAME} PUBLIC OpenMP::OpenMP_CXX)  # Add this line to link OpenMP to the library
 
 if(EXISTS ${INCLUDE_DIR})
