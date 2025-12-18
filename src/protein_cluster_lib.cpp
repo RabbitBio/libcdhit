@@ -19,6 +19,7 @@
 #include <array>
 
 #include <immintrin.h>
+#include "edlib.h"
 
 using namespace std;
 
@@ -615,9 +616,34 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 			const int C = pr.second;
 			const double jac = jaccard_from_CAB(C, A[i], A[j]);
 			if (jac >= tau) {
-                if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                validated_edges++;
-				dsu.unite(i, j);
+               // if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+               // validated_edges++;
+               // dsu.unite(i, j);
+                if(jac > 0.7){
+                    if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+                    validated_edges++;
+                    dsu.unite(i, j);
+                }else{
+
+                    const int len_i = seqs[i].length;
+                    const int len_j = seqs[j].length;
+                    const int min_len = std::min(len_i, len_j);
+                    const int max_distance = (int)(min_len * 0.12);
+                    const char* query = (len_i <= len_j) ? seqs[i].data : seqs[j].data;
+                    const char* target = (len_i <= len_j) ? seqs[j].data : seqs[i].data;
+                    const int query_len = min_len;
+                    const int target_len = (len_i <= len_j) ? len_j : len_i;
+                    EdlibAlignResult ed_result = edlibAlign(query, query_len, target, target_len,  
+                     edlibNewAlignConfig(max_distance, EDLIB_MODE_HW, EDLIB_TASK_DISTANCE, NULL,0));
+                     if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
+                         if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+                         validated_edges++;
+                         std::cout << "i:" << i << "(len:" << len_i << ")" " j:" << j << "(len:" << len_j << ")"
+                          << " editDistance:" << ed_result.editDistance << " maxDistance:" << max_distance << std::endl;
+                         dsu.unite(i, j);
+                     }
+                     edlibFreeAlignResult(ed_result);
+                }
 			}
 		}
 	}
