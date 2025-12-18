@@ -601,7 +601,8 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 		A[i] = std::max(0, L - kmer_size + 1);
 	}
 
-
+    int filter_cnt = 0;
+    int pass_cnt = 0;
 	for (int i = 0; i < N; ++i) {
 		EncodeWords(seqs[i], word_encodes, word_encodes_no, kmer_size);
 
@@ -638,16 +639,20 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
                      if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
                          if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                          validated_edges++;
-                         std::cout << "i:" << i << "(len:" << len_i << ")" " j:" << j << "(len:" << len_j << ")"
-                          << " editDistance:" << ed_result.editDistance << " maxDistance:" << max_distance << std::endl;
+                         //std::cout << "i:" << i << "(len:" << len_i << ")" " j:" << j << "(len:" << len_j << ")"
+                         // << " editDistance:" << ed_result.editDistance << " maxDistance:" << max_distance << std::endl;
                          dsu.unite(i, j);
+                         pass_cnt++;
+                     }else{
+                        filter_cnt++;
                      }
                      edlibFreeAlignResult(ed_result);
                 }
 			}
 		}
 	}
-
+    std::cout << "filter_cnt:" << filter_cnt << std::endl;
+    std::cout << "pass_cnt:" << pair_cnt << std::endl;
 	// 写回代表元（保持与原始 seq_id 的对应）
 	for (int i = 0; i < N; ++i) {
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
