@@ -652,7 +652,7 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 		}
 	}
     std::cout << "filter_cnt:" << filter_cnt << std::endl;
-    std::cout << "pass_cnt:" << pair_cnt << std::endl;
+    std::cout << "pass_cnt:" << pass_cnt << std::endl;
 	// 写回代表元（保持与原始 seq_id 的对应）
 	for (int i = 0; i < N; ++i) {
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
