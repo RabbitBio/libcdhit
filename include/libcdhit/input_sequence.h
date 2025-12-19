@@ -20,7 +20,8 @@ struct Sequence_new
     const char* data;
 	int length;
 	Sequence_new() {}
-	Sequence_new(int id, const char* d) : seq_id(id), data(d) {}
+	Sequence_new(int id, int last_group_id, const char* d) : seq_id(id), data(d), origin_root_id(last_group_id) {}
+	Sequence_new(int id, const char* d) : seq_id(id), data(d), origin_root_id(id) {}
 //    char* identifier = null;
 };
 #endif
