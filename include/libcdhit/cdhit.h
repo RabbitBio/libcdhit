@@ -70,13 +70,13 @@ void clear_word_table_rows_keep_capacity() {
 		for (auto& kv : word_table) kv.second.clear();
 	}
 };
-pair<uint64_t, uint64_t> cluster_sequences(
+vector<uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
 		double tau = 0.36,
 		int nthreads = 1
 		);
-pair<uint64_t, uint64_t> cluster_sequences_st(
+vector<uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
 		double tau = 0.36

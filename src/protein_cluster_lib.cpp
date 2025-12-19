@@ -218,8 +218,10 @@ void precompute_edges_jaccard(
 		int kmer_size, double tau,
 		DSU& global_dsu,// 输出：全局 DSU
 		int nthreads,
-        uint64_t cross_group_edges,
-        uint64_t validated_edges
+        uint64_t& validated_edges,
+        uint64_t& cross_group_edges,
+		uint64_t& high_cj,
+		uint64_t& both
 		)
 {
 	const int N = (int)seqs.size();
@@ -255,7 +257,7 @@ void precompute_edges_jaccard(
 		std::vector<std::pair<int,int>> out_pairs;              // 线程私有
 
 
-#pragma omp for schedule(dynamic,1) reduction(+:cross_group_edges,validated_edges)
+#pragma omp for schedule(dynamic,1) reduction(+:cross_group_edges,validated_edges,high_cj,both)
 		for (int i = 0; i < N; ++i) {
 			if (A[i] <= 0) { 
 				//++progress; 
@@ -272,8 +274,12 @@ void precompute_edges_jaccard(
 				int C = pr.second;
 				double jac = jaccard_from_CAB(C, A[i], A[j]);
 				if (jac >= tau) {
-                    if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                    validated_edges++;
+					bool is_cross_group = seqs[i].origin_root_id != seqs[j].origin_root_id;
+					bool is_high_cj = jac >= 0.9;
+					if(is_cross_group) cross_group_edges++;
+					if(is_high_cj) high_cj++;
+					if(is_cross_group && is_high_cj) both++;
+					validated_edges++;
 					thread_dsu[tid].unite(i, j); // 线程本地 unite
 				}
 			}
@@ -308,7 +314,7 @@ void precompute_edges_jaccard(
 
 
 // 主函数实现
-pair<uint64_t, uint64_t> cluster_sequences(
+std::vector<uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
@@ -414,8 +420,8 @@ pair<uint64_t, uint64_t> cluster_sequences(
 	//DSU dsu(seqs.size());
 	DSU dsu;
     pair<uint64_t, uint64_t> edge_stat = {0, 0}; 
-    uint64_t cross_group_edges, validated_edges;
-	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, cross_group_edges, validated_edges);
+    uint64_t cross_group_edges=0, validated_edges=0, high_cj=0, both=0;
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, validated_edges, cross_group_edges, high_cj, both);
 
 	double t4 = get_time();
 	
@@ -431,7 +437,7 @@ pair<uint64_t, uint64_t> cluster_sequences(
 	//std::cerr << "DSU clustering time: " << (t5 - t4) << " s" << std::endl;
 	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
-    return {cross_group_edges, validated_edges};
+    return {validated_edges, cross_group_edges, high_cj, both};
 }
 
 void cluster_sequences_st_old(
@@ -526,7 +532,7 @@ void cluster_sequences_st_old(
 	}
 
 }
-pair<uint64_t, uint64_t> cluster_sequences_st(
+std::vector<uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau)
@@ -534,6 +540,8 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
     // test edge cnt
     uint64_t cross_group_edges = 0;
     uint64_t validated_edges = 0;
+    uint64_t high_cj = 0;
+	uint64_t both = 0;
 	InitNAA(MAX_UAA); // TODO: 可外移
 	//init_aa_map();    // TODO: 可外移
 
@@ -615,7 +623,11 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 			const int C = pr.second;
 			const double jac = jaccard_from_CAB(C, A[i], A[j]);
 			if (jac >= tau) {
-                if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
+				bool is_cross_group = seqs[i].origin_root_id != seqs[j].origin_root_id;
+				bool is_high_cj = jac >= 0.9;
+				if(is_cross_group) cross_group_edges++;
+				if(is_high_cj) high_cj++;
+				if(is_cross_group && is_high_cj) both++;
                 validated_edges++;
 				dsu.unite(i, j);
 			}
@@ -626,7 +638,8 @@ pair<uint64_t, uint64_t> cluster_sequences_st(
 	for (int i = 0; i < N; ++i) {
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
-    return {cross_group_edges, validated_edges};
+
+    return {validated_edges, cross_group_edges, high_cj, both};
 }
 
 void cluster_sequences_st_reuse(
