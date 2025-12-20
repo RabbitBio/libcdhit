@@ -292,6 +292,10 @@ void precompute_edges_jaccard(
 			for (auto &pr : out_pairs) {
 				int j = pr.first;       // j < i
 				if (A[j] <= 0) continue;
+				//To jump seq pairs already merged in one group from last round
+                if(seqs[i].origin_root_id == seqs[j].origin_root_id) continue;
+				if(thread_dsu[tid].find(i) == thread_dsu[tid].find(j)) continue;
+
 				int C = pr.second;
 				double jac = jaccard_from_CAB(C, A[i], A[j]);
 				if (jac >= tau) {
@@ -687,7 +691,13 @@ std::vector<uint64_t> cluster_sequences_st(
 		for (auto &pr : out_pairs) {
 			const int j = pr.first;   // j < i
 			const int C = pr.second;
+
+			//to jump the seq pairs already merged in one group from last round
+            if(seqs[i].origin_root_id == seqs[j].origin_root_id) continue; 
+			if(dsu.find(i) == dsu.find(j)) continue;
+
 			const double jac = jaccard_from_CAB(C, A[i], A[j]);
+			
 			if (jac >= tau) {
                // if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                // validated_edges++;
