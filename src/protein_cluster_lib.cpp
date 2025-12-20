@@ -240,6 +240,8 @@ void precompute_edges_jaccard(
 		int nthreads,
         uint64_t& validated_edges,
         uint64_t& cross_group_edges,
+        uint64_t& last_round_jump_cnt,
+        uint64_t& this_round_jump_cnt,
 		uint64_t& high_cj,
 		uint64_t& filter_cnt,
 		uint64_t& pass_cnt
@@ -293,8 +295,15 @@ void precompute_edges_jaccard(
 				int j = pr.first;       // j < i
 				if (A[j] <= 0) continue;
 				//To jump seq pairs already merged in one group from last round
-                if(seqs[i].origin_root_id == seqs[j].origin_root_id) continue;
-				if(thread_dsu[tid].find(i) == thread_dsu[tid].find(j)) continue;
+                if(seqs[i].origin_root_id == seqs[j].origin_root_id) 
+                {
+                    last_round_jump_cnt++;
+                    continue;
+                }
+				if(thread_dsu[tid].find(i) == thread_dsu[tid].find(j)){
+                    this_round_jump_cnt++;
+                    continue;
+                }
 
 				int C = pr.second;
 				double jac = jaccard_from_CAB(C, A[i], A[j]);
@@ -477,8 +486,8 @@ std::vector<uint64_t> cluster_sequences(
 	//DSU dsu(seqs.size());
 	DSU dsu;
     pair<uint64_t, uint64_t> edge_stat = {0, 0}; 
-    uint64_t cross_group_edges=0, validated_edges=0, high_cj=0, filter_cnt=0, pass_cnt=0;
-	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt);
+    uint64_t cross_group_edges=0, validated_edges=0, high_cj=0, filter_cnt=0, pass_cnt=0, last_round_jump_cnt=0, this_round_jump_cnt=0;
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, validated_edges, cross_group_edges, last_round_jump_cnt, this_round_jump_cnt, high_cj, filter_cnt, pass_cnt);
 
 	double t4 = get_time();
 	
@@ -500,7 +509,7 @@ std::vector<uint64_t> cluster_sequences(
 	//std::unordered_set<int> unique_roots(parent.begin(), parent.end());
 	//std::cerr << "Number of clusters: " << unique_roots.size() << std::endl;
     //return {validated_edges, cross_group_edges, high_cj, both};
-    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt};
+    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt};
 }
 
 void cluster_sequences_st_old(
@@ -603,6 +612,8 @@ std::vector<uint64_t> cluster_sequences_st(
     // test edge cnt
     uint64_t cross_group_edges = 0;
     uint64_t validated_edges = 0;
+    uint64_t last_round_jump_cnt = 0;
+    uint64_t this_round_jump_cnt = 0;
     uint64_t high_cj = 0;
 	InitNAA(MAX_UAA); // TODO: 可外移
 	//init_aa_map();    // TODO: 可外移
@@ -691,10 +702,17 @@ std::vector<uint64_t> cluster_sequences_st(
 		for (auto &pr : out_pairs) {
 			const int j = pr.first;   // j < i
 			const int C = pr.second;
-
 			//to jump the seq pairs already merged in one group from last round
-            if(seqs[i].origin_root_id == seqs[j].origin_root_id) continue; 
-			if(dsu.find(i) == dsu.find(j)) continue;
+            if(seqs[i].origin_root_id == seqs[j].origin_root_id) {
+                //cout<<"i:"<<i<<" root: "<<seqs[i].origin_root_id<<" j:"<<j<<" root: "<<seqs[j].origin_root_id<<endl;
+                last_round_jump_cnt++;
+                continue;
+            }
+
+			if(dsu.find(i) == dsu.find(j)) {
+                this_round_jump_cnt++;
+                continue;
+            }
 
 			const double jac = jaccard_from_CAB(C, A[i], A[j]);
 			
@@ -747,7 +765,7 @@ std::vector<uint64_t> cluster_sequences_st(
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 
-    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt};
+    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt};
 }
 
 void cluster_sequences_st_reuse(
