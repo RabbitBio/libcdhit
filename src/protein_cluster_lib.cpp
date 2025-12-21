@@ -236,6 +236,7 @@ void precompute_edges_jaccard(
 		const std::vector<Sequence_new>& seqs,
 		std::vector<std::vector<std::pair<int,int>>>& word_table,
 		int kmer_size, double tau,
+        double ed_thres,
 		DSU& global_dsu,// 输出：全局 DSU
 		int nthreads,
         uint64_t& validated_edges,
@@ -317,7 +318,7 @@ void precompute_edges_jaccard(
 					//validated_edges++;
 					//thread_dsu[tid].unite(i, j); // 线程本地 unite
                     //ed-lib
-                    if(jac > 0.6){
+                    if(jac > ed_thres){
                         if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                         validated_edges++;
                         high_cj++;
@@ -382,6 +383,7 @@ std::vector<uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
+		double ed_thres,
 		int nthreads
 		) {
 
@@ -487,7 +489,7 @@ std::vector<uint64_t> cluster_sequences(
 	DSU dsu;
     pair<uint64_t, uint64_t> edge_stat = {0, 0}; 
     uint64_t cross_group_edges=0, validated_edges=0, high_cj=0, filter_cnt=0, pass_cnt=0, last_round_jump_cnt=0, this_round_jump_cnt=0;
-	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, dsu, nthreads, validated_edges, cross_group_edges, last_round_jump_cnt, this_round_jump_cnt, high_cj, filter_cnt, pass_cnt);
+	precompute_edges_jaccard(seqs, word_table, kmer_size, tau, ed_thres, dsu, nthreads, validated_edges, cross_group_edges, last_round_jump_cnt, this_round_jump_cnt, high_cj, filter_cnt, pass_cnt);
 
 	double t4 = get_time();
 	
@@ -607,7 +609,8 @@ void cluster_sequences_st_old(
 std::vector<uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
-		double tau)
+		double tau,
+		double ed_thres)
 {
     // test edge cnt
     uint64_t cross_group_edges = 0;
@@ -720,7 +723,7 @@ std::vector<uint64_t> cluster_sequences_st(
                // if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                // validated_edges++;
                // dsu.unite(i, j);
-                if(jac > 0.6){
+                if(jac > ed_thres){
                     if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
                     validated_edges++;
                     high_cj++;

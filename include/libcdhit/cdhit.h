@@ -74,12 +74,14 @@ vector<uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
 		double tau = 0.36,
+		double ed_thres = 0.6,
 		int nthreads = 1
 		);
 vector<uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
-		double tau = 0.36
+		double tau = 0.36,
+		double ed_thres = 0.6
 		);
 void cluster_sequences_st_reuse(
 		std::vector<Sequence_new>& seqs,
