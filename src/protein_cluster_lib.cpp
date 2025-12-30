@@ -31,7 +31,7 @@ constexpr int aa_value(char c) {
         case 'P': return 12; case 'Q': return 13; case 'R': return 14; case 'S': return 15;
         case 'T': return 16; case 'V': return 17; case 'W': return 18; case 'Y': return 19;
         case 'X': return 20;
-        default:  return 0;
+        default:  return 20;
     }
 }
 
