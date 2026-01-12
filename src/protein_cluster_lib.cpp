@@ -1544,7 +1544,7 @@ void cluster_sequences_st_less10(
     for(int seq_i=0;seq_i<N;seq_i++){
         for(int seq_j=seq_i+1;seq_j<N;seq_j++){
             if(dsu.find(seq_i)==dsu.find(seq_j)) continue;
-            if(seqs[seq_i].origin_root_id != seqs[seq_j].origin_root_id) continue;
+            if(seqs[seq_i].origin_root_id == seqs[seq_j].origin_root_id) continue;
 			// cout<<"<"<<seq_i<<","<<seq_j<<">\t";
 #if defined(__AVX512F__)
             // AVX-512 编译：用刚刚写的 AVX512 版本
