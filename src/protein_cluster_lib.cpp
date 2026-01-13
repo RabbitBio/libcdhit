@@ -1664,7 +1664,7 @@ void cluster_sequences_st_less10(
 
     sort(seqs.begin(), seqs.end(),
         [](const Sequence_new& a, const Sequence_new& b) {
-        return strlen(a.data) > strlen(b.data);
+        return strlen(a.data) < strlen(b.data);
         });
     
     vector<vector<int>> word_encodes(N);
@@ -1674,8 +1674,9 @@ void cluster_sequences_st_less10(
         auto& s = seqs[seq_id];
         int len = strlen(s.data);
         if (len < kmer_size) continue;
-        word_encodes[seq_id].resize(len);
-        word_encodes_no[seq_id].resize(len);
+        int kmer_cnt = len - kmer_size + 1;
+        word_encodes[seq_id].resize(kmer_cnt);
+        word_encodes_no[seq_id].resize(kmer_cnt);
         EncodeWordsSoA(s,word_encodes[seq_id],word_encodes_no[seq_id],kmer_size);
     }
 
@@ -1772,7 +1773,7 @@ vector<uint64_t> cluster_sequences_direct(
     int max_seq_len = 0;
     sort(seqs.begin(), seqs.end(),
         [](const Sequence_new& a, const Sequence_new& b) {
-        return strlen(a.data) > strlen(b.data);
+        return strlen(a.data) < strlen(b.data);
         });
 	cout << "Finish sort" << std::endl;
     
@@ -1784,8 +1785,9 @@ vector<uint64_t> cluster_sequences_direct(
         auto& s = seqs[seq_id];
         int len = strlen(s.data);
         if (len < kmer_size) continue;
-        word_encodes[seq_id].resize(len);
-        word_encodes_no[seq_id].resize(len);
+        int kmer_cnt = len - kmer_size + 1;
+        word_encodes[seq_id].resize(kmer_cnt);
+        word_encodes_no[seq_id].resize(kmer_cnt);
         EncodeWordsSoA(s,word_encodes[seq_id],word_encodes_no[seq_id],kmer_size);
     }
 	cout << "Finish encoding" << std::endl;
