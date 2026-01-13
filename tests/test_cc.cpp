@@ -37,14 +37,16 @@ int main(int argc, char* argv[])
 	int64_t max_num_seqs = 0;
 	int kmer_size = 5;
 	int threads = 1;
-	double tau = 0.05;   // Jaccard 阈值：按需设置
+	double tau = 0.5;   // Jaccard 阈值：按需设置
+    double ed_thres = 0.5;
 	bool mem_reuse = false;
 	bool is_mini = false;
 
 	auto option_input = app.add_option("-i, --input", filename, "input file name, fasta or gziped fasta formats");
 	auto option_max_n = app.add_option("-n, --max_num_seqs", max_num_seqs, "max number of seqs for building word table");
 	auto option_k = app.add_option("-k, --kmer_size", kmer_size, "set kmer size, default 5.");
-	auto option_tau = app.add_option("-t, --jaccard_thres", tau, "set weighted jaccard threshold, default 0.36.");
+	auto option_tau = app.add_option("-t, --jaccard_thres", tau, "set weighted jaccard threshold, default 0.5.");
+	auto option_ed = app.add_option("-e, --edit_distance_thres", ed_thres, "set edit distance threshold, default 0.6.");
 	auto option_output = app.add_option("-o, --output", res_file, "output files");
 	auto option_m = app.add_flag("-m, --mem_reuse", mem_reuse, "enable memory reuse");
 	auto option_mini = app.add_flag("--mini",is_mini,"use method for small scale");
@@ -81,6 +83,7 @@ int main(int argc, char* argv[])
 		total_AAs += l;
 		max_seq_len = std::max(max_seq_len, l);
 		seqs.push_back(Sequence_new(number_seqs,strdup(ks1->seq.s)));
+		seqs[number_seqs].length = l;
 
 		number_seqs++;
 
@@ -100,25 +103,14 @@ int main(int argc, char* argv[])
 //	parent.resize(seqs.size());
 
 	/// init buffer
-
 	double t1 = get_time();
-	if(threads == 1)
-	{
-		if(is_mini)
-			cluster_sequences_st_less10(seqs,kmer_size,tau);
-		else{
-			if(mem_reuse){
-				ClusterWS ws;  // 创建一次，后面多次调用都复用
-				//cluster_sequences_st_reuse(seqs, kmer_size, tau, ws);
-				cerr << "reuse version disabled!!!" << endl;
-			}else{
-				cluster_sequences_st(seqs, kmer_size, tau);
-			}
-		}
-	}else
-	{
-		
-		cluster_sequences(seqs, kmer_size, tau, threads);
+
+	if(is_mini){
+		if(threads == 1) cluster_sequences_st_less10(seqs, kmer_size, tau, ed_thres);
+		else cluster_sequences_direct(seqs,kmer_size,tau, ed_thres, threads);
+	}else{
+		if(threads == 1) cluster_sequences_st(seqs, kmer_size, tau, ed_thres);
+		else cluster_sequences(seqs, kmer_size, tau, ed_thres, threads);
 	}
 	double t2 = get_time();
 	// 打印结果

@@ -70,16 +70,26 @@ void clear_word_table_rows_keep_capacity() {
 		for (auto& kv : word_table) kv.second.clear();
 	}
 };
+
+vector<uint64_t> cluster_sequences_new(
+		std::vector<Sequence_new>& sequences,
+		int kmer_size = 5,
+		double tau = 0.36,
+		double ed_thres = 0.6,
+		int nthreads = 1
+		);
 vector<uint64_t> cluster_sequences(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
 		double tau = 0.36,
+		double ed_thres = 0.6,
 		int nthreads = 1
 		);
 vector<uint64_t> cluster_sequences_st(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
-		double tau = 0.36
+		double tau = 0.36,
+		double ed_thres = 0.6
 		);
 void cluster_sequences_st_reuse(
 		std::vector<Sequence_new>& seqs,
@@ -90,7 +100,16 @@ void cluster_sequences_st_reuse(
 void cluster_sequences_st_less10(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size = 5,
-		double tau = 0.36
+		double tau = 0.5,
+        double ed_thres = 0.5
+		);
+
+vector<uint64_t> cluster_sequences_direct(
+		std::vector<Sequence_new>& seqs,
+		int kmer_size = 5,
+		double tau = 0.5,
+        double ed_thres = 0.5,
+		int num_threads = 1
 		);
 
 void cluster_sequence_singleThread_smallScale_cArray(
