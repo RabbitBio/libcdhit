@@ -12,6 +12,7 @@ public:
 
 	void cdhit_cluster(std::vector<Sequence_new>& seq, std::vector<int>& parent);
 	void cdhit_cluster(std::vector<Sequence_new>& seq, std::vector<int>& parent, int neededThread);
+	void cdhit_cluster(std::vector<Sequence_new>& seq, int neededThread);
 };
 
 // 按需放到合适的头文件
@@ -71,6 +72,12 @@ void clear_word_table_rows_keep_capacity() {
 	}
 };
 
+vector<uint64_t> cluster_sequences_new_st(
+		std::vector<Sequence_new>& seqs,
+		int kmer_size,
+		double tau,
+		double ed_thres
+		);
 vector<uint64_t> cluster_sequences_new(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,

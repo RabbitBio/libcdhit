@@ -1992,6 +1992,15 @@ void SequenceDB::updateParent(vector<int>& parent){
 
 
 }
+
+void SequenceDB::updateParent(std::vector<Sequence_new>& seq){
+	int N = sequences.size();
+
+	for (int i = 0; i < N; i++) {
+		seq[i].seq_id = sequences[i]->index;
+		seq[i].new_root_id = sequences[rep_seqs[sequences[i]->cluster_id]]->index;
+	}
+}
 // codes by mgl
 void SequenceDB::Readvector(const std::vector<Input_Sequence*>& input, const Options& options) {
 	int count = 0;

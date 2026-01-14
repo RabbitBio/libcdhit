@@ -588,6 +588,7 @@ public:
 	void printSequences();
 	// add by yy
 	void updateParent(vector<int>& parent);
+	void updateParent(std::vector<Sequence_new>& seq);
 
 	void Read(const char* file, const Options& options);
 	void Readgz(const char* file, const Options& options);
