@@ -104,14 +104,19 @@ int main(int argc, char* argv[])
 
 	/// init buffer
 	double t1 = get_time();
-
-	if(is_mini){
-		if(threads == 1) cluster_sequences_st_less10(seqs, kmer_size, tau, ed_thres);
-		else cluster_sequences_direct(seqs,kmer_size,tau, ed_thres, threads);
+	if(seqs.size() >= 10000) {
+		cluster_sequences_new(seqs, kmer_size, tau, ed_thres, threads); 
 	}else{
-		if(threads == 1) cluster_sequences_st(seqs, kmer_size, tau, ed_thres);
-		else cluster_sequences(seqs, kmer_size, tau, ed_thres, threads);
+		cluster_sequences_new_st(seqs, kmer_size, tau, ed_thres);
 	}
+	
+//	if(is_mini){
+//		if(threads == 1) cluster_sequences_st_less10(seqs, kmer_size, tau, ed_thres);
+//		else cluster_sequences_direct(seqs,kmer_size,tau, ed_thres, threads);
+//	}else{
+//		if(threads == 1) cluster_sequences_st(seqs, kmer_size, tau, ed_thres);
+//		else cluster_sequences(seqs, kmer_size, tau, ed_thres, threads);
+//	}
 	double t2 = get_time();
 	// 打印结果
 	//std::cout << "Parent array:" << std::endl;
