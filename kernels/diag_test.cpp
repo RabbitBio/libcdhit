@@ -160,7 +160,7 @@ double get_time() {
 struct Sequence {
     string name;
     string comment;
-    string seq;
+    char* seq;
     int len;
 };
 // WorkingBuffer结构体定义
@@ -2429,7 +2429,7 @@ int local_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix
             j1 = k - band_left;
             // penalty for leading gap opening = penalty for gap extension
             // each of the left side query hunging residues give ext_gap (-1)
-            score_mat[i][j1] = mat.ext_gap * i;
+            score_mat[i][j1] = (int64_t)mat.ext_gap * (int64_t)i;
             back_mat[i][j1] = DP_BACK_TOP;
         }
         back_mat[-tband][tband - band_left] = DP_BACK_NONE;
@@ -2439,7 +2439,7 @@ int local_band_align(char iseq1[], char iseq2[], int len1, int len2, ScoreMatrix
         int tband = (band_left > 0) ? band_left : 0;
         for (j = tband; j <= band_right; j++) {
             j1 = j - band_left;
-            score_mat[0][j1] = mat.ext_gap * j;
+            score_mat[0][j1] = (int64_t)mat.ext_gap * (int64_t)j;
             back_mat[0][j1] = DP_BACK_LEFT;
         }
         back_mat[0][tband - band_left] = DP_BACK_NONE;
@@ -2790,12 +2790,13 @@ int main(int argc, char* argv[]) {
         Sequence seq;
         seq.name = ks1->name.s;
         // seq.comment = ks1->comment.s;
-        seq.seq = ks1->seq.s;
+        seq.seq = (char*)malloc(strlen(ks1->seq.s) + 1);
+        strcpy(seq.seq, ks1->seq.s);
         seq.len = length;
-        if (seq.seq.size() < 50) continue;
+        // if (seq.seq.size() < 50) continue;
         //  cerr<<"11111"<<endl;
-        char* seq_data = seq.seq.data();
-        for (int i = 0; i < seq.seq.size(); i++) {
+        char* seq_data = seq.seq;
+        for (int i = 0; i < length; i++) {
             seq_data[i] = aa2idx[seq_data[i] - 'A'];
         }
         // cerr<<"11111"<<endl;
@@ -2808,15 +2809,32 @@ int main(int argc, char* argv[]) {
     // exit(0);
     // const char seq1[] = {1, 2, 1, 2, 1};  // 假设的蛋白质序列1
     // const char seq2[] = {0, 1, 2, 1, 4};  // 假设的蛋白质序列2
-    int band_width = 20, required_aa1 = 1851;
+    int band_width = 20;
+    int required_aa1;
 
     WorkingBuffer buffer(max_seq_len); // 创建工作区
 
-    char* seq1 = seqs[1].seq.data();
-    char* seq2 = seqs[0].seq.data();
+    char* seq1 = seqs[1].seq;
+    char* seq2 = seqs[0].seq;
     int len1 = seqs[1].len;
     int len2 = seqs[0].len;
-
+    int ss = 2;
+    double aa1_cutoff = 0.9;
+    required_aa1 = (len1 - ss) - int(ss * ceil( (1.0 - aa1_cutoff) * len1 ));
+    int aa1_old = int (aa1_cutoff* (double) len1) - ss + 1;
+    double thd = 0.9;
+	//double rest = (len_eff - ss) / double(len_eff * ss);
+    double rest = (len1 - 5) / double(len1 * 5);
+    double thd0 = 1.0 - rest;
+    double fnew = 0;
+    double fold = 1;
+    if (thd > thd0)
+    {
+        fnew = (thd - thd0) / rest;
+        fold = 1.0 - fnew;
+    }
+    required_aa1 = (int)(fnew*required_aa1 + fold*aa1_old);
+    cerr<<"required_aa1 "<<required_aa1<<endl;
     auto t0 = Clock::now();
     // 计算二元对的倒排表
     ComputeAAP(seq1, len1, buffer);
@@ -2914,7 +2932,8 @@ int main(int argc, char* argv[]) {
     cout << "tiden_no  " << tiden_no << endl;
     cout << "alnln  " << alnln << endl;
     cout << "distance  " << distance << endl;
-
+    cerr<<"len1  "<<len1<<endl;
+    cerr<<"len2  "<<len2<<endl;
     auto d0 = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0);
     auto d1 = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1);
     auto d2 = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2);
