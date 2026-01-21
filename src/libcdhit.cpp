@@ -13,6 +13,11 @@ void setOptionsClusterThd(float cluster_thd){
     options.Validate();
 }
 
+void setOptionsSkipAlign(bool skip_align){
+	options.skip_align = skip_align;
+	std::cerr << "Skip-Align of cdhit is: " << (skip_align ? "true" : "false") << std::endl;
+}
+
 void cluster::cdhit_cluster(std::vector<Sequence_new>& seq, std::vector<int>& parent)
 {
 	SequenceDB seq_db;

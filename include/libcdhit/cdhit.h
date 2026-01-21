@@ -4,6 +4,11 @@
 #include "input_sequence.h"
 #include "robin_hood.h"
 
+// 配置接口
+void initOptions();
+void setOptionsClusterThd(float cluster_thd);
+void setOptionsSkipAlign(bool skip_align);
+
 class cluster{
 public:
 //	vector<int> parent;
