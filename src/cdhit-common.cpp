@@ -3573,32 +3573,44 @@ int SequenceDB::CheckOneAA(Sequence* seq, WordTable& table, WorkingParam& param,
 			band_width1, band_left, band_center, band_right, required_aa1);
 		if (best_sum < required_aa2) continue;
 
-		int rc = FAILED_FUNC;
-		if (options.print || aln_cover_flag) //return overlap region
-			rc = local_band_align(seqi, seqj, len, len2, mat,
-				best_score, tiden_no, alnln, distance, talign_info,
-				band_left, band_center, band_right, buf);
-		else
-			rc = local_band_align(seqi, seqj, len, len2, mat,
-				best_score, tiden_no, alnln, distance, talign_info,
-				band_left, band_center, band_right, buf);
-		if (rc == FAILED_FUNC) continue;
-		if (tiden_no < required_aa1) continue;
-		lens = len;
-		if (options.has2D && len > len2) lens = len2;
-		len_eff1 = (options.global_identity == 0) ? alnln : (lens - talign_info[4]);
-		tiden_pc = tiden_no / (float)len_eff1;
-		if (options.useDistance) {
-			if (distance > options.distance_thd) continue;
-			if (distance >= seq->distance) continue; // existing distance
-		}
-		else {
+		// 如果 skip_align 为 true，跳过 local_band_align，直接使用 word table 结果
+		if (options.skip_align) {
+			// 使用估算的 identity（基于 word 匹配）
+			tiden_pc = (float)best_sum / (float)(len < len2 ? len : len2);
 			if (tiden_pc < options.cluster_thd) continue;
-			if (tiden_pc <= seq->identity) continue; // existing iden_no
-		}
-		if (aln_cover_flag) {
-			if (talign_info[3] - talign_info[2] + 1 < min_aln_lenL) continue;
-			if (talign_info[1] - talign_info[0] + 1 < min_aln_lenS) continue;
+			tiden_no = best_sum;
+			distance = 1.0f - tiden_pc;
+			talign_info[0] = 0; talign_info[1] = len - 1;
+			talign_info[2] = 0; talign_info[3] = len2 - 1;
+			talign_info[4] = 0;
+		} else {
+			int rc = FAILED_FUNC;
+			if (options.print || aln_cover_flag) //return overlap region
+				rc = local_band_align(seqi, seqj, len, len2, mat,
+					best_score, tiden_no, alnln, distance, talign_info,
+					band_left, band_center, band_right, buf);
+			else
+				rc = local_band_align(seqi, seqj, len, len2, mat,
+					best_score, tiden_no, alnln, distance, talign_info,
+					band_left, band_center, band_right, buf);
+			if (rc == FAILED_FUNC) continue;
+			if (tiden_no < required_aa1) continue;
+			lens = len;
+			if (options.has2D && len > len2) lens = len2;
+			len_eff1 = (options.global_identity == 0) ? alnln : (lens - talign_info[4]);
+			tiden_pc = tiden_no / (float)len_eff1;
+			if (options.useDistance) {
+				if (distance > options.distance_thd) continue;
+				if (distance >= seq->distance) continue; // existing distance
+			}
+			else {
+				if (tiden_pc < options.cluster_thd) continue;
+				if (tiden_pc <= seq->identity) continue; // existing iden_no
+			}
+			if (aln_cover_flag) {
+				if (talign_info[3] - talign_info[2] + 1 < min_aln_lenL) continue;
+				if (talign_info[1] - talign_info[0] + 1 < min_aln_lenS) continue;
+			}
 		}
 		if (options.has2D) seq->state |= IS_REDUNDANT;
 		flag = 1; seq->identity = tiden_pc; seq->cluster_id = rep->cluster_id;

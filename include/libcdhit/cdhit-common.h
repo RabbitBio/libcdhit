@@ -312,6 +312,7 @@ struct Options
 	bool    useIdentity;
 	bool    useDistance;
 	bool    backupFile;
+	bool    skip_align;  // 跳过 local_band_align，只使用 word table 检查
 
 	string  input;
 	string  input_pe;
@@ -331,6 +332,7 @@ struct Options
 		backupFile = false;
 		useIdentity = false;
 		useDistance = false;
+		skip_align = false;  // 默认不跳过对齐
 		has2D = false;
 		isEST = false;
 		is454 = false;
