@@ -283,12 +283,12 @@ void precompute_edges_jaccard(
 
     int one_block = N / 100;
 
-#pragma omp for schedule(dynamic,1) reduction(+:cross_group_edges,validated_edges,high_cj,filter_cnt,pass_cnt,need_edlib_edge)
+#pragma omp for schedule(dynamic,1) //reduction(+:cross_group_edges,validated_edges,high_cj,filter_cnt,pass_cnt,need_edlib_edge)
 		for (int i = 0; i < N; ++i) {
-            if (i % one_block == 0 || i == N - 1) {
-#pragma omp critical
-                print_progress(i + 1, N);
-            }
+//            if (i % one_block == 0 || i == N - 1) {
+//#pragma omp critical
+//                print_progress(i + 1, N);
+//            }
 			if (A[i] <= 0) { 
 				//++progress; 
 				continue; 
@@ -303,21 +303,18 @@ void precompute_edges_jaccard(
 				if (A[j] <= 0) continue;
 				//To jump seq pairs already merged in one group from last round
 				if(thread_dsu[tid].find(i) == thread_dsu[tid].find(j)){
-                    this_round_jump_cnt++;
-					thread_dsu[tid].unite(i, j);
                     continue;
                 }
                 if(seqs[i].origin_root_id == seqs[j].origin_root_id) 
                 {
-                    last_round_jump_cnt++;
+					thread_dsu[tid].unite(i, j);
                     continue;
-                }				int C = pr.second;
+                }
+				int C = pr.second;
+
 				double jac = jaccard_from_CAB(C, A[i], A[j]);
 				if (jac >= tau) {
                     if(jac >= ed_thres){
-                        if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                        validated_edges++;
-                        high_cj++;
                         thread_dsu[tid].unite(i, j);
                     }else{
                         const int len_i = seqs[i].length;
@@ -333,12 +330,7 @@ void precompute_edges_jaccard(
                         if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
                             //std::cout << "i:" << i << "(len:" << len_i << ")" " j:" << j << "(len:" << len_j << ")"
                             //    << " editDistance:" << ed_result.editDistance << " maxDistance:" << max_distance << std::endl;
-                            if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                            validated_edges++;
                             thread_dsu[tid].unite(i, j);
-                            pass_cnt++;
-                        }else{
-                            filter_cnt++;
                         }
                         edlibFreeAlignResult(ed_result);
                     }
@@ -371,7 +363,7 @@ void precompute_edges_jaccard(
 	//std::cerr << "Precompute (edges) time: " << (tC - tA) << " s\n";
 	//std::cerr << "Precompute (edges) time (parallel region): " << (tB - tA) << " s\n";
 	//std::cerr << "Merge DSU time: " << (tC - tB) << " s\n";
-	std::cout << "Need to do edlib edges numbers: " << need_edlib_edge << std::endl;
+	//std::cout << "Need to do edlib edges numbers: " << need_edlib_edge << std::endl;
 }
 
 // 主函数实现
@@ -1638,31 +1630,31 @@ void precompute_edges_jaccard_direct(
         word_encodes_no[seq_id].resize(kmer_cnt);
         EncodeWordsSoA(s,word_encodes[seq_id],word_encodes_no[seq_id],kmer_size);
     }
-	cout << "Finish encoding" << std::endl;
+	//cout << "Finish encoding" << std::endl;
    
     // 估算内存使用
-    size_t total_mem = 0;
-    for (int i = 0; i < N; ++i) {
-        total_mem += word_encodes[i].capacity() * sizeof(int) * 2;
-    }
-    std::cout << "Encoding memory usage: " << (total_mem / (1024.0 * 1024.0 * 1024.0)) << " GB" << std::endl;
+    //size_t total_mem = 0;
+    //for (int i = 0; i < N; ++i) {
+    //    total_mem += word_encodes[i].capacity() * sizeof(int) * 2;
+    //}
+    //std::cout << "Encoding memory usage: " << (total_mem / (1024.0 * 1024.0 * 1024.0)) << " GB" << std::endl;
 
     std::vector<DSU> thread_dsu(num_threads, DSU(N));
     std::atomic<int> progress_counter(0);
-    std::cout << "Comparing sequence pairs (threads=" << num_threads << ")..." << std::endl;
+    //std::cout << "Comparing sequence pairs (threads=" << num_threads << ")..." << std::endl;
 #pragma omp parallel num_threads(num_threads)
 	{
 		int tid = omp_get_thread_num();
-#pragma omp for schedule(dynamic,1) reduction(+:cross_group_edges,validated_edges,high_cj,filter_cnt,pass_cnt,need_edlib_edge)
+#pragma omp for schedule(dynamic,1) //reduction(+:cross_group_edges,validated_edges,high_cj,filter_cnt,pass_cnt,need_edlib_edge)
 		for(int seq_i=0;seq_i<N;seq_i++){
-            // 显示进度条（线程0负责更新）
-            if (tid == 0) {
-                int cur = progress_counter.load();
-                if (cur % 10 == 0 || cur == N - 1) {
-                    print_progress(cur + 1, N);
-                }
-            }
-            progress_counter++;
+            //// 显示进度条（线程0负责更新）
+            //if (tid == 0) {
+            //    int cur = progress_counter.load();
+            //    if (cur % 10 == 0 || cur == N - 1) {
+            //        print_progress(cur + 1, N);
+            //    }
+            //}
+            //progress_counter++;
  
 			for(int seq_j=seq_i+1;seq_j<N;seq_j++){
 				double jac = 0.0;
@@ -1693,12 +1685,8 @@ void precompute_edges_jaccard_direct(
 	
 				if(jac>=tau){
 					if(jac >= ed_thres){
-						if(seqs[seq_i].origin_root_id != seqs[seq_j].origin_root_id) cross_group_edges++;
-						validated_edges++;
-						high_cj++;
 						thread_dsu[tid].unite(seq_i,seq_j);
 					}else{
-						need_edlib_edge++;
 						//const int len_i = strlen(seqs[seq_id].data);
 						//const int len_j = strlen(seqs[seq_id].data);
 						const int len_i = seqs[seq_i].length;
@@ -1714,11 +1702,6 @@ void precompute_edges_jaccard_direct(
 						if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
 							thread_dsu[tid].unite(seq_i, seq_j);
 
-							if(seqs[seq_i].origin_root_id != seqs[seq_j].origin_root_id) cross_group_edges++;
-							validated_edges++;
-							pass_cnt++;
-						}else{
-							filter_cnt++;
 						}
 						edlibFreeAlignResult(ed_result);
 					}
@@ -1727,9 +1710,6 @@ void precompute_edges_jaccard_direct(
 			}
 		}
 	}
-    
-    // 确保进度条显示100%
-    print_progress(N, N);
     
     // 合并所有线程的 DSU
     for (int t = 0; t < num_threads; ++t) {
@@ -1901,7 +1881,7 @@ vector<uint64_t> cluster_sequences_direct(
     return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt};
 }
 
-std::vector<uint64_t> cluster_sequences_new(
+void cluster_sequences_new(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
@@ -2024,18 +2004,18 @@ std::vector<uint64_t> cluster_sequences_new(
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
 
-    std::cout << "filter_cnt in edlib: " << filter_cnt << std::endl;
-    std::cout << "pass_cnt in edlib: " << pass_cnt << std::endl;
-    std::cout << "validated_edges:" << validated_edges << std::endl;
-    std::cout << "cj > ed_thres edges:" << high_cj << std::endl;
-    std::cout << "cross group edges: " << cross_group_edges << std::endl;
-	std::cout << "need to do edlib edges: " << need_edlib_edge << std::endl;
+    //std::cout << "filter_cnt in edlib: " << filter_cnt << std::endl;
+    //std::cout << "pass_cnt in edlib: " << pass_cnt << std::endl;
+    //std::cout << "validated_edges:" << validated_edges << std::endl;
+    //std::cout << "cj > ed_thres edges:" << high_cj << std::endl;
+    //std::cout << "cross group edges: " << cross_group_edges << std::endl;
+	//std::cout << "need to do edlib edges: " << need_edlib_edge << std::endl;
 
-	std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
-    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt, need_edlib_edge};
+	//std::cerr << "Jaccard filtering time: " << (t4 - t3) << " s" << std::endl;
+    //return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt, need_edlib_edge};
 }
 
-vector<uint64_t> precompute_edges_jaccard_st_direct(
+void precompute_edges_jaccard_st_direct(
 	vector<Sequence_new>& seqs,
 	int kmer_size, double tau,
 	double ed_thres,
@@ -2098,9 +2078,6 @@ vector<uint64_t> precompute_edges_jaccard_st_direct(
 
 			if(jac>=tau){
 				if(jac >= ed_thres){
-					if(seqs[seq_i].origin_root_id != seqs[seq_j].origin_root_id) cross_group_edges++;
-					validated_edges++;
-					high_cj++;
 					dsu.unite(seq_i,seq_j);
 				}else{
 					need_edlib_edge++;
@@ -2117,11 +2094,6 @@ vector<uint64_t> precompute_edges_jaccard_st_direct(
 					if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
 						dsu.unite(seq_i, seq_j);
 
-						if(seqs[seq_i].origin_root_id != seqs[seq_j].origin_root_id) cross_group_edges++;
-						validated_edges++;
-						pass_cnt++;
-					}else{
-						filter_cnt++;
 					}
 					edlibFreeAlignResult(ed_result);
 				}
@@ -2129,10 +2101,9 @@ vector<uint64_t> precompute_edges_jaccard_st_direct(
 			}
 		}
 	}
-    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt, need_edlib_edge};
 }
 
-vector<uint64_t> precompute_edges_jaccard_st(
+void precompute_edges_jaccard_st(
 	const vector<Sequence_new>& seqs,
 	robin_hood::unordered_map<int, std::vector<std::pair<int,int>>>& word_table,
 	int kmer_size, double tau,
@@ -2196,9 +2167,6 @@ vector<uint64_t> precompute_edges_jaccard_st(
 			
 			if (jac >= tau) {
                 if(jac >= ed_thres){
-                    if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                    validated_edges++;
-                    high_cj++;
                     dsu.unite(i, j);
                 }else{
                     const int len_i = seqs[i].length;
@@ -2213,21 +2181,15 @@ vector<uint64_t> precompute_edges_jaccard_st(
                             edlibNewAlignConfig(max_distance, EDLIB_MODE_HW, EDLIB_TASK_DISTANCE, NULL,0));
                      if (ed_result.editDistance != -1 && ed_result.editDistance <= max_distance) {
                          dsu.unite(i, j);
-                         if(seqs[i].origin_root_id != seqs[j].origin_root_id) cross_group_edges++;
-                         validated_edges++;
-                         pass_cnt++;
-                     }else{
-                        filter_cnt++;
                      }
                      edlibFreeAlignResult(ed_result);
                 }
 			}
 		}
 	}
-    return {validated_edges, cross_group_edges, high_cj, filter_cnt, pass_cnt, last_round_jump_cnt, this_round_jump_cnt, need_edlib_edge};
 }
 
-std::vector<uint64_t> cluster_sequences_new_st(
+void cluster_sequences_new_st(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
@@ -2251,20 +2213,22 @@ std::vector<uint64_t> cluster_sequences_new_st(
 	std::vector<int> word_encodes_no(max_seq_len);
 
 
-	// 构建稀疏表：只为实际出现的 bucket 建立项
-	for (int seq_id = 0; seq_id < N; ++seq_id) {
-		const auto& s = seqs[seq_id];
-		const int len = s.length;
-		if (len < kmer_size) continue;
+	if(seqs.size() > 100) {
+		// 构建稀疏表：只为实际出现的 bucket 建立项
+		for (int seq_id = 0; seq_id < N; ++seq_id) {
+			const auto& s = seqs[seq_id];
+			const int len = s.length;
+			if (len < kmer_size) continue;
 
-		EncodeWords(s, word_encodes, word_encodes_no, kmer_size);
-		const int kmer_no = len - kmer_size + 1;
+			EncodeWords(s, word_encodes, word_encodes_no, kmer_size);
+			const int kmer_no = len - kmer_size + 1;
 
-		for (int j = 0; j < kmer_no; ++j) {
-			const int bucket = word_encodes[j];
-			const int count  = word_encodes_no[j];
-			if (count > 0) {
-				word_table[bucket].emplace_back(seq_id, count);
+			for (int j = 0; j < kmer_no; ++j) {
+				const int bucket = word_encodes[j];
+				const int count  = word_encodes_no[j];
+				if (count > 0) {
+					word_table[bucket].emplace_back(seq_id, count);
+				}
 			}
 		}
 	}
@@ -2279,17 +2243,15 @@ std::vector<uint64_t> cluster_sequences_new_st(
 
 	DSU dsu(N);
 	vector<uint64_t> edge_stat;
-	if(unique_kmer_cnt * 10000 < total_kmer_cnt){
+	if(N < 100 || unique_kmer_cnt * 10000 < total_kmer_cnt){
 		word_table.clear();
-		edge_stat = precompute_edges_jaccard_st_direct(seqs, kmer_size, tau, ed_thres, dsu);
+		precompute_edges_jaccard_st_direct(seqs, kmer_size, tau, ed_thres, dsu);
 	}else{
-		edge_stat = precompute_edges_jaccard_st(seqs, word_table, kmer_size, tau, ed_thres, dsu);
+		precompute_edges_jaccard_st(seqs, word_table, kmer_size, tau, ed_thres, dsu);
 	}
 
 	for (int i = 0; i < N; ++i) {
 		seqs[i].new_root_id = seqs[dsu.find(i)].seq_id;
 	}
-
-    return edge_stat;
 
 }

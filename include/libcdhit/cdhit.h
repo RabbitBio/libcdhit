@@ -77,13 +77,13 @@ void clear_word_table_rows_keep_capacity() {
 	}
 };
 
-vector<uint64_t> cluster_sequences_new_st(
+void cluster_sequences_new_st(
 		std::vector<Sequence_new>& seqs,
 		int kmer_size,
 		double tau,
 		double ed_thres
 		);
-vector<uint64_t> cluster_sequences_new(
+void cluster_sequences_new(
 		std::vector<Sequence_new>& sequences,
 		int kmer_size = 5,
 		double tau = 0.36,
